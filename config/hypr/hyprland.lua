@@ -22,26 +22,12 @@
 ------------------
 
 -- See https://wiki.hypr.land/configuring/core/monitors/
+-- Machine-specific monitor layouts belong in local.lua (see local.example.lua)
 hl.monitor({
     output   = "",
     mode     = "preferred",
     position = "auto",
     scale    = "auto",
-})
-
-hl.monitor({
-    output   = "eDP-1",
-    mode     = "preferred",
-    position = "0x0",
-    scale    = 1,
-})
-
-hl.monitor({
-    output   = "desc:LG Electronics LG HDR 4K 0x0004A9AC",
-    mode     = "preferred",
-    -- Align bottom edge with eDP-1 (1080 - 2160/1.25 = -648)
-    position = "1920x-648",
-    scale    = 1.25,
 })
 
 
@@ -259,7 +245,7 @@ hl.config({
 
 hl.config({
     input = {
-        kb_layout  = "ro",
+        kb_layout  = "us",
         kb_variant = "",
         kb_model   = "",
         kb_options = "",
@@ -279,25 +265,6 @@ hl.gesture({
     fingers = 3,
     direction = "horizontal",
     action = "workspace"
-})
-
--- VXE wireless mouse
-for _, name in ipairs({
-    "compx-vxe-nordicmouse-1k-dongle-2",
-    "compx-vxe-nordicmouse-1k-dongle-3",
-}) do
-    hl.device({
-        name = name,
-        sensitivity = -0.94,
-        accel_profile = "flat",
-    })
-end
-
--- Example per-device config
--- See https://wiki.hypr.land/configuring/core/devices/ for more
-hl.device({
-    name        = "epic-mouse-v1",
-    sensitivity = -0.5,
 })
 
 
@@ -407,3 +374,14 @@ hl.window_rule({
     move  = "20 monitor_h-120",
     float = true,
 })
+
+
+------------------------
+---- LOCAL OVERRIDES ---
+------------------------
+
+-- Optional machine-specific overrides (see local.example.lua)
+local ok, err = pcall(require, "local")
+if not ok and not tostring(err):find("module 'local' not found", 1, true) then
+    error(err)
+end

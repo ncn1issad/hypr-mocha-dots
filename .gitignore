@@ -6,3 +6,7 @@ backup-before-*/
 __pycache__/
 *.pyc
 .DS_Store
+
+# Machine-specific local overrides
+config/hypr/local.lua
+config/hypr/local/
