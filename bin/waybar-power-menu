@@ -1,0 +1,220 @@
+#!/usr/bin/env python3
+"""Catppuccin fuzzel power menu for Waybar, reading actions from wlogout's layout."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+PID_FILE = RUNTIME_DIR / "waybar-power-menu.pid"
+OTHER_PID_FILES = [RUNTIME_DIR / "waybar-network-menu.pid"]
+
+WLOGOUT_LAYOUTS = [
+    Path.home() / ".config/wlogout/layout",
+    Path("/etc/wlogout/layout"),
+]
+
+ICONS = {
+    "lock": "󰌾",
+    "suspend": "󰤄",
+    "hibernate": "󰜗",
+    "logout": "󰍃",
+    "reboot": "󰜉",
+    "shutdown": "󰐥",
+}
+
+ORDER = ["lock", "suspend", "hibernate", "logout", "reboot", "shutdown"]
+CONFIRM_LABELS = {"logout", "reboot", "shutdown"}
+
+
+def run_cmd(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+
+def kill_pidfile(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        pid = int(path.read_text().strip())
+    except ValueError:
+        path.unlink(missing_ok=True)
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if b"fuzzel" in cmdline:
+            os.kill(pid, signal.SIGTERM)
+            path.unlink(missing_ok=True)
+            return True
+    except OSError:
+        pass
+    path.unlink(missing_ok=True)
+    return False
+
+
+def detect_cursor_output() -> str | None:
+    pos_res = run_cmd(["hyprctl", "cursorpos", "-j"])
+    mon_res = run_cmd(["hyprctl", "monitors", "-j"])
+    if pos_res.returncode != 0 or mon_res.returncode != 0:
+        return None
+    try:
+        pos = json.loads(pos_res.stdout)
+        monitors = json.loads(mon_res.stdout)
+        cx, cy = float(pos["x"]), float(pos["y"])
+        for mon in monitors:
+            scale = float(mon.get("scale", 1) or 1)
+            transform = int(mon.get("transform", 0) or 0)
+            w = float(mon["width"]) / scale
+            h = float(mon["height"]) / scale
+            if transform in (1, 3, 5, 7):
+                w, h = h, w
+            mx, my = float(mon["x"]), float(mon["y"])
+            if mx <= cx < mx + w and my <= cy < my + h:
+                return str(mon["name"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
+def load_wlogout_actions() -> list[dict[str, str]]:
+    """Parse concatenated JSON objects from wlogout's layout file."""
+    raw = ""
+    for path in WLOGOUT_LAYOUTS:
+        if path.is_file():
+            raw = path.read_text(encoding="utf-8")
+            break
+
+    items: list[dict[str, str]] = []
+    decoder = json.JSONDecoder()
+    idx = 0
+    length = len(raw)
+    while idx < length:
+        while idx < length and raw[idx].isspace():
+            idx += 1
+        if idx >= length:
+            break
+        try:
+            obj, end = decoder.raw_decode(raw, idx)
+            if isinstance(obj, dict) and obj.get("action"):
+                items.append(
+                    {
+                        "label": str(obj.get("label", "")).lower(),
+                        "text": str(obj.get("text") or obj.get("label", "")),
+                        "action": str(obj["action"]),
+                    }
+                )
+            idx = end
+        except json.JSONDecodeError:
+            break
+
+    if not items:
+        return [
+            {"label": "lock", "text": "Lock", "action": "/usr/bin/hyprlock"},
+            {"label": "suspend", "text": "Suspend", "action": "systemctl suspend"},
+            {"label": "hibernate", "text": "Hibernate", "action": "systemctl hibernate"},
+            {"label": "logout", "text": "Logout", "action": "/usr/bin/uwsm stop"},
+            {"label": "reboot", "text": "Reboot", "action": "systemctl reboot"},
+            {"label": "shutdown", "text": "Shutdown", "action": "systemctl poweroff"},
+        ]
+
+    order_map = {name: i for i, name in enumerate(ORDER)}
+    return sorted(items, key=lambda item: order_map.get(item["label"], len(ORDER)))
+
+
+def run_fuzzel(
+    entries: list[tuple[str, object]],
+    output: str | None,
+    prompt: str = "󰐥  ",
+    placeholder: str = "Power action...",
+) -> object | None:
+    cmd = [
+        "fuzzel",
+        "--dmenu",
+        "--index",
+        "--minimal-lines",
+        f"--lines={len(entries)}",
+        "--anchor=top-right",
+        "--x-margin=10",
+        "--y-margin=10",
+        "--width=24",
+        f"--prompt={prompt}",
+        f"--placeholder={placeholder}",
+    ]
+    if output:
+        cmd.append(f"--output={output}")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    PID_FILE.write_text(str(proc.pid))
+    try:
+        stdout, _ = proc.communicate("\n".join(label for label, _ in entries))
+    finally:
+        try:
+            if PID_FILE.exists() and PID_FILE.read_text().strip() == str(proc.pid):
+                PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    if proc.returncode != 0:
+        return None
+    try:
+        return entries[int(stdout.strip())][1]
+    except (ValueError, IndexError):
+        return None
+
+
+def main() -> int:
+    if kill_pidfile(PID_FILE):
+        return 0
+    for other in OTHER_PID_FILES:
+        kill_pidfile(other)
+
+    output = detect_cursor_output()
+    actions = load_wlogout_actions()
+
+    entries: list[tuple[str, object]] = []
+    for item in actions:
+        icon = ICONS.get(item["label"], "󰐥")
+        entries.append((f"{icon}  {item['text']}", item))
+
+    selected = run_fuzzel(entries, output)
+    if not isinstance(selected, dict):
+        return 0
+
+    label = selected["label"]
+    text = selected["text"]
+    icon = ICONS.get(label, "󰐥")
+
+    if label in CONFIRM_LABELS:
+        confirmed = run_fuzzel(
+            [
+                (f"{icon}  Yes, {text}", True),
+                ("󰅖  Cancel", False),
+            ],
+            output,
+            prompt=f"{icon}  ",
+            placeholder=f"Confirm {text.lower()}...",
+        )
+        if not confirmed:
+            return 0
+
+    subprocess.Popen(
+        ["/bin/sh", "-c", selected["action"]],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
