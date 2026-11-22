@@ -1,0 +1,8 @@
+# Local backups & runtime/cache artifacts
+backup-before-*/
+*.before-*
+*.bak
+*.log
+__pycache__/
+*.pyc
+.DS_Store

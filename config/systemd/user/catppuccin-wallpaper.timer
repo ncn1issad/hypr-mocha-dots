@@ -1,0 +1,11 @@
+[Unit]
+Description=Rotate the Catppuccin Mocha wallpaper every 15 minutes
+PartOf=graphical-session.target
+
+[Timer]
+OnActiveSec=1s
+OnUnitActiveSec=15min
+AccuracySec=1s
+
+[Install]
+WantedBy=graphical-session.target

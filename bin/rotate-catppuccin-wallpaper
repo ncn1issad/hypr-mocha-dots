@@ -1,0 +1,100 @@
+#!/usr/bin/bash
+set -euo pipefail
+
+wallpapers="$HOME/Pictures/Wallpapers/Catppuccin Mocha"
+awww="$HOME/.local/bin/awww"
+greeter_cache=/var/cache/sddm-desktop-wallpaper
+fallback=/usr/share/sddm/themes/catppuccin-mocha-lavender/backgrounds/wall.png
+
+current_wallpaper() {
+    local line
+    while IFS= read -r line; do
+        if [[ $line =~ currently\ displaying:\ (image|animation):\ (.+)$ ]] && [[ -r ${BASH_REMATCH[2]} ]]; then
+            printf '%s\n' "${BASH_REMATCH[2]}"
+            return
+        fi
+    done <<< "$1"
+    return 1
+}
+
+publish_wallpaper() {
+    local image=$1 temporary
+    [[ $image == "$wallpapers/"* ]] || return 0
+    temporary=$(mktemp "$greeter_cache/.current.XXXXXXXX") || return 1
+    if cp -- "$image" "$temporary" && chmod 0640 "$temporary" && mv -fT -- "$temporary" "$greeter_cache/current"; then
+        return
+    fi
+    rm -f -- "$temporary"
+    return 1
+}
+
+if [[ ${1:-} == --current ]]; then
+    if ! current_wallpaper "$("$awww" query 2>/dev/null || true)"; then
+        printf '%s\n' "$fallback"
+    fi
+    exit
+fi
+
+exec 9>"${XDG_RUNTIME_DIR:?Missing Wayland runtime directory}/catppuccin-wallpaper.lock"
+flock 9
+
+for ((attempt = 0; attempt < 30; attempt++)); do
+    if outputs=$("$awww" query 2>/dev/null) && [[ -n $outputs ]]; then
+        break
+    fi
+    sleep 1
+done
+if [[ -z $outputs ]]; then
+    echo "awww is unavailable in this Wayland session." >&2
+    exit 1
+fi
+
+if [[ ${1:-} == --publish-current ]]; then
+    wallpaper=$(current_wallpaper "$outputs")
+    publish_wallpaper "$wallpaper"
+    exit
+fi
+
+if [[ ${1:-} == --sync-output ]]; then
+    output=${2:?Missing output name}
+    for ((attempt = 0; attempt < 10; attempt++)); do
+        outputs=$("$awww" query)
+        if grep -Fq -- ": $output: " <<< "$outputs"; then
+            while IFS= read -r line; do
+                [[ $line == ": $output: "* ]] && continue
+                if [[ $line =~ currently\ displaying:\ (image|animation):\ (.+)$ ]]; then
+                    wallpaper=${BASH_REMATCH[2]}
+                    if [[ -f $wallpaper ]]; then
+                        "$awww" img "$wallpaper" --outputs "$output" --transition-type none
+                        exit
+                    fi
+                fi
+            done <<< "$outputs"
+        fi
+        sleep 0.5
+    done
+    exit 0
+fi
+
+mapfile -d '' -t images < <(
+    find "$wallpapers" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' \) -print0
+)
+if (( ${#images[@]} == 0 )); then
+    echo "No images found in $wallpapers." >&2
+    exit 1
+fi
+
+current_paths=$(sed -nE 's/^.*currently displaying: (image|animation): //p' <<< "$outputs")
+choices=()
+for image in "${images[@]}"; do
+    if ! grep -Fxq -- "$image" <<< "$current_paths"; then
+        choices+=("$image")
+    fi
+done
+if (( ${#choices[@]} == 0 )); then
+    choices=("${images[@]}")
+fi
+
+IFS= read -r -d '' wallpaper < <(printf '%s\0' "${choices[@]}" | shuf -z -n 1)
+"$awww" img "$wallpaper"
+publish_wallpaper "$wallpaper"
