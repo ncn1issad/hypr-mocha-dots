@@ -15,7 +15,7 @@
     "tooltip-format": "Power menu",
     "on-click": "/usr/bin/wlogout"
   },
-  "tray": { "spacing": 8, "orders": { "nm-applet": 10 } },
+  "tray": { "spacing": 8 },
   "hyprland/window": { "max-length": 48 },
   "hyprland/workspaces": { "format": "{name}" },
   "mpris": {
@@ -44,7 +44,9 @@
     "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
     "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
     "tooltip-format-ethernet": "{ifname} · {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected"
+    "tooltip-format-disconnected": "Disconnected",
+    "on-click": "$HOME/.local/bin/waybar-network-menu",
+    "on-click-right": "/usr/bin/nm-connection-editor"
   },
   "backlight": {
     "device": "intel_backlight",

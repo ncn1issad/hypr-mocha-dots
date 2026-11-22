@@ -1,0 +1,804 @@
+#!/usr/bin/env python3
+"""Full-featured nm-applet replacement menu in fuzzel for Waybar."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import socket
+import subprocess
+import sys
+from pathlib import Path
+
+PID_FILE = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "waybar-network-menu.pid"
+
+WIFI_ICONS = ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"]
+
+
+def split_nmcli(line: str) -> list[str]:
+    fields: list[str] = []
+    buf: list[str] = []
+    escaped = False
+    for ch in line:
+        if escaped:
+            buf.append(ch)
+            escaped = False
+        elif ch == "\\":
+            escaped = True
+        elif ch == ":":
+            fields.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    fields.append("".join(buf))
+    return fields
+
+
+def run_cmd(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        args,
+        input=input_text,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+
+def notify(summary: str, body: str = "", urgency: str = "normal") -> None:
+    cmd = ["notify-send", "-a", "Network", "-u", urgency, summary]
+    if body:
+        cmd.append(body)
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def copy_to_clipboard(text: str, label: str = "") -> None:
+    res = run_cmd(["wl-copy"], input_text=text)
+    if res.returncode == 0:
+        notify("Copied to clipboard", f"{label}: {text}" if label else text)
+
+
+def detect_cursor_output() -> str | None:
+    """Return the Hyprland monitor name currently under the cursor."""
+    pos_res = run_cmd(["hyprctl", "cursorpos", "-j"])
+    mon_res = run_cmd(["hyprctl", "monitors", "-j"])
+    if pos_res.returncode != 0 or mon_res.returncode != 0:
+        return None
+    try:
+        pos = json.loads(pos_res.stdout)
+        monitors = json.loads(mon_res.stdout)
+        cx, cy = float(pos["x"]), float(pos["y"])
+        for mon in monitors:
+            scale = float(mon.get("scale", 1) or 1)
+            transform = int(mon.get("transform", 0) or 0)
+            w = float(mon["width"]) / scale
+            h = float(mon["height"]) / scale
+            if transform in (1, 3, 5, 7):
+                w, h = h, w
+            mx, my = float(mon["x"]), float(mon["y"])
+            if mx <= cx < mx + w and my <= cy < my + h:
+                return str(mon["name"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
+def fuzzel_base(output: str | None) -> list[str]:
+    cmd = [
+        "fuzzel",
+        "--dmenu",
+        "--anchor=top-right",
+        "--x-margin=10",
+        "--y-margin=10",
+        "--width=38",
+    ]
+    if output:
+        cmd.append(f"--output={output}")
+    return cmd
+
+
+def toggle_existing() -> bool:
+    if not PID_FILE.exists():
+        return False
+    try:
+        pid = int(PID_FILE.read_text().strip())
+    except ValueError:
+        PID_FILE.unlink(missing_ok=True)
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if b"fuzzel" in cmdline:
+            os.kill(pid, signal.SIGTERM)
+            PID_FILE.unlink(missing_ok=True)
+            return True
+    except OSError:
+        pass
+    PID_FILE.unlink(missing_ok=True)
+    return False
+
+
+def run_fuzzel(args: list[str], input_text: str | None = None) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.Popen(
+        args,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    PID_FILE.write_text(str(proc.pid))
+    try:
+        stdout, stderr = proc.communicate(input=input_text)
+        return subprocess.CompletedProcess(args, proc.returncode, stdout, stderr)
+    finally:
+        try:
+            if PID_FILE.exists() and PID_FILE.read_text().strip() == str(proc.pid):
+                PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
+def fuzzel_select(
+    entries: list[tuple[str, object]],
+    output: str | None,
+    prompt: str = "󰤨  ",
+    placeholder: str = "Search...",
+    max_lines: int = 16,
+) -> object | None:
+    menu_text = "\n".join(label for label, _ in entries)
+    res = run_fuzzel(
+        fuzzel_base(output)
+        + [
+            "--index",
+            "--minimal-lines",
+            f"--lines={min(max_lines, max(1, len(entries)))}",
+            f"--prompt={prompt}",
+            f"--placeholder={placeholder}",
+        ],
+        input_text=menu_text,
+    )
+    if res.returncode != 0:
+        return None
+    try:
+        idx = int(res.stdout.strip())
+        return entries[idx][1]
+    except (ValueError, IndexError):
+        return None
+
+
+def fuzzel_input(
+    output: str | None,
+    prompt: str,
+    placeholder: str = "",
+    password: bool = False,
+) -> str | None:
+    cmd = fuzzel_base(output) + [f"--prompt-only={prompt}"]
+    if placeholder:
+        cmd.append(f"--placeholder={placeholder}")
+    if password:
+        cmd.append("--password")
+    res = run_fuzzel(cmd)
+    if res.returncode != 0:
+        return None
+    return res.stdout.rstrip("\n")
+
+
+def wifi_icon(signal_pct: int) -> str:
+    idx = min(len(WIFI_ICONS) - 1, max(0, signal_pct * len(WIFI_ICONS) // 101))
+    return WIFI_ICONS[idx]
+
+
+def networking_enabled() -> bool:
+    return run_cmd(["nmcli", "networking"]).stdout.strip().lower() == "enabled"
+
+
+def wifi_enabled() -> bool:
+    return run_cmd(["nmcli", "radio", "wifi"]).stdout.strip().lower() == "enabled"
+
+
+def get_devices() -> list[dict[str, str]]:
+    res = run_cmd(["nmcli", "-t", "-f", "DEVICE,TYPE,STATE,CONNECTION", "device", "status"])
+    devices: list[dict[str, str]] = []
+    for line in res.stdout.splitlines():
+        parts = split_nmcli(line)
+        if len(parts) >= 4:
+            devices.append(
+                {
+                    "device": parts[0],
+                    "type": parts[1],
+                    "state": parts[2],
+                    "connection": parts[3],
+                }
+            )
+    return devices
+
+
+def get_connections(active_only: bool = False) -> list[dict[str, str]]:
+    cmd = ["nmcli", "-t", "-f", "NAME,UUID,TYPE,DEVICE", "connection", "show"]
+    if active_only:
+        cmd.append("--active")
+    res = run_cmd(cmd)
+    conns: list[dict[str, str]] = []
+    for line in res.stdout.splitlines():
+        parts = split_nmcli(line)
+        if len(parts) >= 4:
+            conns.append(
+                {
+                    "name": parts[0],
+                    "uuid": parts[1],
+                    "type": parts[2],
+                    "device": parts[3],
+                }
+            )
+    return conns
+
+
+def get_active_hotspot() -> dict[str, str] | None:
+    for conn in get_connections(active_only=True):
+        if conn["type"] == "802-11-wireless":
+            mode = run_cmd(["nmcli", "-g", "802-11-wireless.mode", "connection", "show", conn["uuid"]])
+            if mode.stdout.strip() == "ap":
+                return conn
+    return None
+
+
+def list_wifi(rescan: bool = False) -> list[dict[str, object]]:
+    args = [
+        "nmcli",
+        "-t",
+        "-f",
+        "IN-USE,SSID,SIGNAL,SECURITY",
+        "device",
+        "wifi",
+        "list",
+        "--rescan",
+        "yes" if rescan else "no",
+    ]
+    res = run_cmd(args)
+    by_ssid: dict[str, dict[str, object]] = {}
+    for line in res.stdout.splitlines():
+        if not line:
+            continue
+        parts = split_nmcli(line)
+        if len(parts) < 4:
+            continue
+        in_use = parts[0] == "*"
+        ssid = parts[1].strip()
+        if not ssid:
+            continue
+        try:
+            sig = int(parts[2])
+        except ValueError:
+            sig = 0
+        security = parts[3].strip()
+        secured = bool(security and security != "--")
+
+        existing = by_ssid.get(ssid)
+        if existing is None:
+            by_ssid[ssid] = {
+                "ssid": ssid,
+                "in_use": in_use,
+                "signal": sig,
+                "secured": secured,
+                "security": security if secured else "Open",
+            }
+        else:
+            if in_use:
+                existing["in_use"] = True
+            if sig > int(existing["signal"]):
+                existing["signal"] = sig
+            if secured:
+                existing["secured"] = True
+                existing["security"] = security
+
+    return sorted(
+        by_ssid.values(),
+        key=lambda item: (not bool(item["in_use"]), -int(item["signal"]), str(item["ssid"]).lower()),
+    )
+
+
+def find_saved_wifi_uuid(ssid: str) -> str | None:
+    for conn in get_connections(active_only=False):
+        if conn["type"] == "802-11-wireless":
+            ssid_res = run_cmd(["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", conn["uuid"]])
+            if ssid_res.stdout.strip() == ssid:
+                return conn["uuid"]
+    return None
+
+
+def find_active_wifi_conn() -> dict[str, str] | None:
+    for conn in get_connections(active_only=True):
+        if conn["type"] == "802-11-wireless":
+            return conn
+    return None
+
+
+def open_settings() -> None:
+    subprocess.Popen(
+        ["/usr/bin/nm-connection-editor"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def show_connection_info(output: str | None, device_filter: str | None = None) -> None:
+    devices = [
+        d
+        for d in get_devices()
+        if d["type"] not in ("loopback", "wifi-p2p")
+        and d["state"] == "connected"
+        and (device_filter is None or d["device"] == device_filter)
+    ]
+
+    entries: list[tuple[str, object]] = []
+    if not devices:
+        entries.append(("󰲜  No active connections", ("back", None)))
+    else:
+        for dev in devices:
+            dev_name = dev["device"]
+            fields = (
+                "GENERAL.DEVICE,GENERAL.TYPE,GENERAL.CONNECTION,GENERAL.HWADDR,"
+                "IP4.ADDRESS,IP4.GATEWAY,IP4.DNS,IP6.ADDRESS"
+            )
+            res = run_cmd(["nmcli", "-t", "-f", fields, "device", "show", dev_name])
+            info: list[tuple[str, str]] = []
+            for line in res.stdout.splitlines():
+                parts = split_nmcli(line)
+                if len(parts) < 2 or not parts[1]:
+                    continue
+                key, val = parts[0], parts[1]
+                if key == "GENERAL.DEVICE":
+                    info.append(("Interface", val))
+                elif key == "GENERAL.TYPE":
+                    info.append(("Type", val))
+                elif key == "GENERAL.CONNECTION":
+                    info.append(("Connection", val))
+                elif key == "GENERAL.HWADDR":
+                    info.append(("MAC", val))
+                elif key.startswith("IP4.ADDRESS"):
+                    info.append(("IPv4", val))
+                elif key == "IP4.GATEWAY":
+                    info.append(("Gateway", val))
+                elif key.startswith("IP4.DNS"):
+                    info.append(("DNS", val))
+                elif key.startswith("IP6.ADDRESS") and not val.startswith("fe80::"):
+                    info.append(("IPv6", val))
+
+            # Add Wi-Fi signal/rate if wifi
+            if dev["type"] == "wifi":
+                wifi_res = run_cmd(
+                    ["nmcli", "-t", "-f", "IN-USE,SIGNAL,RATE,SECURITY", "device", "wifi", "list", "--rescan", "no", "ifname", dev_name]
+                )
+                for line in wifi_res.stdout.splitlines():
+                    p = split_nmcli(line)
+                    if len(p) >= 4 and p[0] == "*":
+                        info.append(("Signal", f"{p[1]}%"))
+                        if p[2]:
+                            info.append(("Speed", p[2]))
+                        if p[3]:
+                            info.append(("Security", p[3]))
+                        break
+
+            for k, v in info:
+                entries.append((f"󰆏  {k}: {v}", ("copy", (k, v))))
+
+    entries.append(("󰁍  Back", ("back", None)))
+    choice = fuzzel_select(
+        entries,
+        output,
+        prompt="󰋽  ",
+        placeholder="Select item to copy...",
+        max_lines=16,
+    )
+    if not choice:
+        return
+    action, payload = choice
+    if action == "copy":
+        k, v = payload
+        copy_to_clipboard(v, k)
+    elif action == "back":
+        show_menu(output, rescan=False)
+
+
+def show_active_wifi_actions(output: str | None, net: dict[str, object]) -> None:
+    ssid = str(net["ssid"])
+    active = find_active_wifi_conn()
+    dev_name = active["device"] if active else None
+
+    entries: list[tuple[str, object]] = [
+        ("󰋽  Connection Information", ("info", dev_name)),
+        ("󰌙  Disconnect", ("disconnect", active)),
+        ("󰧧  Forget Network", ("forget", active)),
+        ("󰁍  Back", ("back", None)),
+    ]
+    choice = fuzzel_select(
+        entries,
+        output,
+        prompt=f"󰤨  {ssid} ",
+        placeholder="Choose action...",
+        max_lines=6,
+    )
+    if not choice:
+        return
+    action, payload = choice
+    if action == "info":
+        show_connection_info(output, device_filter=payload)
+    elif action == "disconnect":
+        if payload:
+            r = run_cmd(["nmcli", "connection", "down", payload["uuid"]])
+            if r.returncode == 0:
+                notify("Wi-Fi disconnected", ssid)
+            else:
+                notify("Failed to disconnect", r.stderr.strip(), "critical")
+    elif action == "forget":
+        confirm = fuzzel_select(
+            [
+                (f"󰧧  Yes, forget {ssid}", True),
+                ("󰅖  Cancel", False),
+            ],
+            output,
+            prompt="󰧧  ",
+            placeholder="Confirm...",
+            max_lines=3,
+        )
+        if confirm and payload:
+            r = run_cmd(["nmcli", "connection", "delete", payload["uuid"]])
+            if r.returncode == 0:
+                notify("Network forgotten", ssid)
+            else:
+                notify("Failed to forget network", r.stderr.strip(), "critical")
+    elif action == "back":
+        show_menu(output, rescan=False)
+
+
+def connect_wifi(output: str | None, ssid: str, secured: bool) -> None:
+    saved_uuid = find_saved_wifi_uuid(ssid)
+    if saved_uuid:
+        res = run_cmd(["nmcli", "connection", "up", saved_uuid])
+        if res.returncode == 0:
+            notify("Connected to Wi-Fi", ssid)
+            return
+        err = res.stderr.strip()
+        if not secured or "Secrets were required" not in err:
+            notify(f"Failed to connect to {ssid}", err, "critical")
+            return
+
+    if secured:
+        password = fuzzel_input(output, f"󰌾 {ssid}: ", "Wi-Fi password", password=True)
+        if not password:
+            return
+        res = run_cmd(["nmcli", "device", "wifi", "connect", ssid, "password", password])
+    else:
+        res = run_cmd(["nmcli", "device", "wifi", "connect", ssid])
+
+    if res.returncode == 0:
+        notify("Connected to Wi-Fi", ssid)
+    else:
+        notify(f"Failed to connect to {ssid}", res.stderr.strip(), "critical")
+
+
+def connect_hidden_wifi(output: str | None) -> None:
+    ssid = fuzzel_input(output, "󱛃 Hidden SSID: ", "Network name")
+    if not ssid:
+        return
+    password = fuzzel_input(
+        output,
+        f"󰌾 {ssid}: ",
+        "Password (leave empty if open)",
+        password=True,
+    )
+    if password is None:
+        return
+    cmd = ["nmcli", "device", "wifi", "connect", ssid, "hidden", "yes"]
+    if password:
+        cmd.extend(["password", password])
+    res = run_cmd(cmd)
+    if res.returncode == 0:
+        notify("Connected to hidden Wi-Fi", ssid)
+    else:
+        notify(f"Failed to connect to {ssid}", res.stderr.strip(), "critical")
+
+
+def handle_hotspot(output: str | None, wifi_dev: str | None) -> None:
+    active_ap = get_active_hotspot()
+    if active_ap:
+        psk = run_cmd(
+            ["nmcli", "-s", "-g", "802-11-wireless-security.psk", "connection", "show", active_ap["uuid"]]
+        ).stdout.strip()
+        ssid = run_cmd(
+            ["nmcli", "-g", "802-11-wireless.ssid", "connection", "show", active_ap["uuid"]]
+        ).stdout.strip() or active_ap["name"]
+        entries: list[tuple[str, object]] = [
+            (f"󰆏  SSID: {ssid}", ("copy", ("Hotspot SSID", ssid))),
+        ]
+        if psk:
+            entries.append((f"󰆏  Password: {psk}", ("copy", ("Hotspot Password", psk))))
+        entries.extend(
+            [
+                ("󰌙  Stop Hotspot", ("stop", active_ap["uuid"])),
+                ("󰁍  Back", ("back", None)),
+            ]
+        )
+        choice = fuzzel_select(entries, output, prompt="󰀃  ", placeholder="Hotspot active...", max_lines=6)
+        if not choice:
+            return
+        action, payload = choice
+        if action == "copy":
+            copy_to_clipboard(payload[1], payload[0])
+        elif action == "stop":
+            r = run_cmd(["nmcli", "connection", "down", payload])
+            if r.returncode == 0:
+                notify("Wi-Fi hotspot stopped")
+            else:
+                notify("Failed to stop hotspot", r.stderr.strip(), "critical")
+        elif action == "back":
+            show_menu(output, rescan=False)
+        return
+
+    if not wifi_dev:
+        notify("No Wi-Fi adapter available", urgency="critical")
+        return
+
+    default_ssid = f"{socket.gethostname()}-hotspot"
+    ssid = fuzzel_input(output, "󰀃 Hotspot SSID: ", default_ssid)
+    if ssid is None:
+        return
+    ssid = ssid.strip() or default_ssid
+
+    password = fuzzel_input(output, "󰌾 Password (8+ chars): ", "WPA2 hotspot password", password=True)
+    if password is None:
+        return
+    if len(password) < 8:
+        notify("Hotspot password too short", "WPA2 requires at least 8 characters.", "critical")
+        return
+
+    res = run_cmd(["nmcli", "device", "wifi", "hotspot", "ifname", wifi_dev, "ssid", ssid, "password", password])
+    if res.returncode == 0:
+        notify("Wi-Fi hotspot started", f"SSID: {ssid}")
+    else:
+        notify("Failed to start hotspot", res.stderr.strip(), "critical")
+
+
+def handle_ethernet(output: str | None, eth_dev: dict[str, str]) -> None:
+    state = eth_dev["state"]
+    if state == "unavailable":
+        notify("Ethernet cable unplugged", eth_dev["device"])
+        return
+
+    if state == "connected":
+        con_name = eth_dev["connection"]
+        active_eth = next(
+            (c for c in get_connections(active_only=True) if c["device"] == eth_dev["device"]),
+            None,
+        )
+        entries: list[tuple[str, object]] = [
+            ("󰋽  Connection Information", ("info", eth_dev["device"])),
+            ("󰌙  Disconnect Ethernet", ("disconnect", active_eth)),
+            ("󰒓  Edit Connections...", ("settings", None)),
+            ("󰁍  Back", ("back", None)),
+        ]
+        choice = fuzzel_select(entries, output, prompt=f"󰈀  {con_name} ", placeholder="Choose action...", max_lines=6)
+        if not choice:
+            return
+        action, payload = choice
+        if action == "info":
+            show_connection_info(output, device_filter=payload)
+        elif action == "disconnect" and payload:
+            r = run_cmd(["nmcli", "connection", "down", payload["uuid"]])
+            if r.returncode == 0:
+                notify("Ethernet disconnected", con_name)
+            else:
+                notify("Failed to disconnect Ethernet", r.stderr.strip(), "critical")
+        elif action == "settings":
+            open_settings()
+        elif action == "back":
+            show_menu(output, rescan=False)
+        return
+
+    # Disconnected but cable present: pick a saved ethernet profile or auto-connect
+    eth_conns = [c for c in get_connections(active_only=False) if c["type"] == "802-3-ethernet"]
+    if len(eth_conns) == 1:
+        r = run_cmd(["nmcli", "connection", "up", eth_conns[0]["uuid"]])
+        if r.returncode == 0:
+            notify("Ethernet connected", eth_conns[0]["name"])
+        else:
+            notify("Failed to connect Ethernet", r.stderr.strip(), "critical")
+        return
+
+    entries = [(f"󰈀  {c['name']}", ("up", c)) for c in eth_conns]
+    entries.append(("󰁍  Back", ("back", None)))
+    choice = fuzzel_select(entries, output, prompt="󰈀  ", placeholder="Select Ethernet profile...", max_lines=8)
+    if not choice:
+        return
+    action, payload = choice
+    if action == "up":
+        r = run_cmd(["nmcli", "connection", "up", payload["uuid"]])
+        if r.returncode == 0:
+            notify("Ethernet connected", payload["name"])
+        else:
+            notify("Failed to connect Ethernet", r.stderr.strip(), "critical")
+    elif action == "back":
+        show_menu(output, rescan=False)
+
+
+def handle_vpn(output: str | None) -> None:
+    all_conns = get_connections(active_only=False)
+    active_uuids = {c["uuid"] for c in get_connections(active_only=True)}
+    vpns = [c for c in all_conns if c["type"] in ("vpn", "wireguard")]
+
+    if not vpns:
+        open_settings()
+        return
+
+    entries: list[tuple[str, object]] = []
+    for v in vpns:
+        is_active = v["uuid"] in active_uuids
+        icon = "󰕥" if is_active else "󰳌"
+        mark = "  󰄬" if is_active else ""
+        entries.append((f"{icon}  {v['name']}{mark}", ("toggle", (v, is_active))))
+    entries.append(("󰒓  Configure VPN...", ("settings", None)))
+    entries.append(("󰁍  Back", ("back", None)))
+
+    choice = fuzzel_select(entries, output, prompt="󰳌  ", placeholder="VPN connections...", max_lines=10)
+    if not choice:
+        return
+    action, payload = choice
+    if action == "toggle":
+        v, is_active = payload
+        sub = "down" if is_active else "up"
+        r = run_cmd(["nmcli", "connection", sub, v["uuid"]])
+        if r.returncode == 0:
+            notify("VPN disconnected" if is_active else "VPN connected", v["name"])
+        else:
+            notify(f"VPN {sub} failed", r.stderr.strip(), "critical")
+    elif action == "settings":
+        open_settings()
+    elif action == "back":
+        show_menu(output, rescan=False)
+
+
+def show_menu(output: str | None, rescan: bool = False) -> None:
+    entries: list[tuple[str, object]] = []
+
+    if not networking_enabled():
+        entries.append(("󰖟  Enable Networking", ("net_on", None)))
+        entries.append(("󰒓  Edit Connections...", ("settings", None)))
+    else:
+        devices = get_devices()
+        eth_devs = [d for d in devices if d["type"] == "ethernet"]
+        wifi_devs = [d for d in devices if d["type"] == "wifi"]
+        wifi_dev_name = wifi_devs[0]["device"] if wifi_devs else None
+
+        # Ethernet entries
+        for eth in eth_devs:
+            if eth["state"] == "connected":
+                entries.append((f"󰈀  {eth['connection']}  󰄬", ("ethernet", eth)))
+            elif eth["state"] == "unavailable":
+                entries.append(("󰈂  Ethernet (Unplugged)", ("ethernet", eth)))
+            else:
+                entries.append((f"󰈀  Ethernet ({eth['state']})", ("ethernet", eth)))
+
+        # Wi-Fi entries
+        w_enabled = wifi_enabled()
+        if wifi_devs and w_enabled:
+            active_ap = get_active_hotspot()
+            if active_ap:
+                entries.append((f"󰀃  Hotspot: {active_ap['name']}  󰄬", ("hotspot", wifi_dev_name)))
+
+            networks = list_wifi(rescan=rescan)
+            if not networks and not rescan:
+                networks = list_wifi(rescan=True)
+
+            for net in networks:
+                ssid = str(net["ssid"])
+                sig = int(net["signal"])
+                secured = bool(net["secured"])
+                in_use = bool(net["in_use"])
+                icon = wifi_icon(sig)
+                lock = " 󰌾" if secured else ""
+                mark = "  󰄬" if in_use else ""
+                entries.append((f"{icon}{lock}  {ssid} ({sig}%){mark}", ("wifi", net)))
+
+            entries.append(("󰑐  Rescan Wi-Fi", ("rescan", None)))
+            entries.append(("󱛃  Hidden Wi-Fi Network...", ("hidden_wifi", None)))
+            if not active_ap:
+                entries.append(("󰀃  Create Wi-Fi Hotspot...", ("hotspot", wifi_dev_name)))
+        elif wifi_devs:
+            entries.append(("󰤨  Enable Wi-Fi", ("wifi_on", None)))
+
+        # VPN entry
+        all_conns = get_connections(active_only=False)
+        active_uuids = {c["uuid"] for c in get_connections(active_only=True)}
+        vpns = [c for c in all_conns if c["type"] in ("vpn", "wireguard")]
+        active_vpns = [v for v in vpns if v["uuid"] in active_uuids]
+        if active_vpns:
+            entries.append((f"󰕥  VPN: {active_vpns[0]['name']}  󰄬", ("vpn", None)))
+        elif vpns:
+            entries.append((f"󰳌  VPN Connections ({len(vpns)})...", ("vpn", None)))
+        else:
+            entries.append(("󰳌  VPN Connections...", ("vpn", None)))
+
+        # Info & toggles (matching nm-applet right-click menu)
+        entries.append(("󰋽  Connection Information", ("info", None)))
+        if wifi_devs and w_enabled:
+            entries.append(("󰖪  Disable Wi-Fi", ("wifi_off", None)))
+        entries.append(("󰪎  Disable Networking", ("net_off", None)))
+        entries.append(("󰒓  Edit Connections...", ("settings", None)))
+
+    choice = fuzzel_select(
+        entries,
+        output,
+        prompt="󰤨  ",
+        placeholder="Search networks or actions...",
+        max_lines=16,
+    )
+    if not choice:
+        return
+
+    action, payload = choice
+    if action == "wifi":
+        net = payload
+        assert isinstance(net, dict)
+        if net["in_use"]:
+            show_active_wifi_actions(output, net)
+        else:
+            connect_wifi(output, str(net["ssid"]), bool(net["secured"]))
+    elif action == "ethernet":
+        handle_ethernet(output, payload)
+    elif action == "rescan":
+        show_menu(output, rescan=True)
+    elif action == "hidden_wifi":
+        connect_hidden_wifi(output)
+    elif action == "hotspot":
+        handle_hotspot(output, payload)
+    elif action == "vpn":
+        handle_vpn(output)
+    elif action == "info":
+        show_connection_info(output)
+    elif action == "wifi_off":
+        r = run_cmd(["nmcli", "radio", "wifi", "off"])
+        if r.returncode == 0:
+            notify("Wi-Fi disabled")
+        else:
+            notify("Failed to disable Wi-Fi", r.stderr.strip(), "critical")
+    elif action == "wifi_on":
+        r = run_cmd(["nmcli", "radio", "wifi", "on"])
+        if r.returncode == 0:
+            notify("Wi-Fi enabled")
+        else:
+            notify("Failed to enable Wi-Fi", r.stderr.strip(), "critical")
+    elif action == "net_off":
+        r = run_cmd(["nmcli", "networking", "off"])
+        if r.returncode == 0:
+            notify("Networking disabled")
+        else:
+            notify("Failed to disable networking", r.stderr.strip(), "critical")
+    elif action == "net_on":
+        r = run_cmd(["nmcli", "networking", "on"])
+        if r.returncode == 0:
+            notify("Networking enabled")
+        else:
+            notify("Failed to enable networking", r.stderr.strip(), "critical")
+    elif action == "settings":
+        open_settings()
+
+
+def main() -> int:
+    if toggle_existing():
+        return 0
+    other = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "waybar-power-menu.pid"
+    if other.exists():
+        try:
+            pid = int(other.read_text().strip())
+            if b"fuzzel" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                os.kill(pid, signal.SIGTERM)
+        except (ValueError, OSError):
+            pass
+        other.unlink(missing_ok=True)
+    output = detect_cursor_output()
+    show_menu(output, rescan=False)
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
