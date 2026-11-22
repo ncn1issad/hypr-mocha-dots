@@ -30,9 +30,17 @@ hl.monitor({
 })
 
 hl.monitor({
+    output   = "eDP-1",
+    mode     = "preferred",
+    position = "0x0",
+    scale    = 1,
+})
+
+hl.monitor({
     output   = "desc:LG Electronics LG HDR 4K 0x0004A9AC",
     mode     = "preferred",
-    position = "auto",
+    -- Align bottom edge with eDP-1 (1080 - 2160/1.25 = -648)
+    position = "1920x-648",
     scale    = 1.25,
 })
 
