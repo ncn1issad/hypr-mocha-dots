@@ -277,7 +277,10 @@ window#waybar.empty .modules-left #mpris {
 }
 
 #mpris {
-  color:@lavender;
+  color: @lavender;
+}
+#mpris.paused {
+  color: @overlay1;
 }
 
 #network {

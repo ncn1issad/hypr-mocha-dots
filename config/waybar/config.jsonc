@@ -20,9 +20,28 @@
   "hyprland/window": { "max-length": 48 },
   "hyprland/workspaces": { "format": "{name}" },
   "mpris": {
+    "interval": 1,
     "format": "󰎇 {title}",
-    "format-paused": "",
-    "max-length": 30
+    "format-paused": "󰎇 {title}",
+    "format-stopped": "",
+    "dynamic-order": ["artist", "album"],
+    "dynamic-separator": "  ·  ",
+    "player-icons": {
+      "default": "󰎇",
+      "chromium": "󰊯",
+      "firefox": "󰈹",
+      "spotify": "󰓇",
+      "vlc": "󰕼"
+    },
+    "status-icons": {
+      "playing": "󰐊",
+      "paused": "󰏤"
+    },
+    "tooltip-format": "<b><span color='#cdd6f4'>󰎇  {title}</span></b>\n<span color='#b4befe'>󰠃  {dynamic}</span>\n<span color='#a6adc8'>{status_icon}  {status}  ·  {player_icon} {player}  ·  󰔛 {position}/{length}</span>\n<span color='#45475a'>──────────────────────────</span>\n<span color='#7f849c'>󰍽  Left 󰐎  ·  Middle 󰒮  ·  Right 󰒭</span>",
+    "max-length": 30,
+    "on-click": "/usr/bin/playerctl play-pause",
+    "on-click-middle": "/usr/bin/playerctl previous",
+    "on-click-right": "/usr/bin/playerctl next"
   },
   "clock": {
     "format": "󰅐 {:%H:%M}",
