@@ -123,6 +123,7 @@ window#waybar.empty .modules-left #mpris {
 #wireplumber,
 #workspaces,
 #custom-backlight,
+#custom-external-backlight,
 #custom-battery,
 #custom-nightlight,
 #custom-browser,
@@ -173,7 +174,8 @@ window#waybar.empty .modules-left #mpris {
 }
 
 #bluetooth,
-#backlight {
+#backlight,
+#custom-external-backlight {
   color: @blue;
 }
 

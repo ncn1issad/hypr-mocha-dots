@@ -53,6 +53,11 @@ end)
 
 hl.on("monitor.added", function(monitor)
     hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/rotate-catppuccin-wallpaper --sync-output " .. monitor.name)
+    hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/waybar-external-backlight --refresh")
+end)
+
+hl.on("monitor.removed", function()
+    hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/waybar-external-backlight --refresh")
 end)
 
 -- Autostart necessary processes (like notifications daemons, status bars, etc.)
