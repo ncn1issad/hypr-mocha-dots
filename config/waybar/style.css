@@ -123,6 +123,7 @@ window#waybar.empty .modules-left #mpris {
 #wireplumber,
 #workspaces,
 #custom-backlight,
+#custom-battery,
 #custom-nightlight,
 #custom-browser,
 #custom-cava_mviz,
@@ -176,8 +177,15 @@ window#waybar.empty .modules-left #mpris {
   color: @blue;
 }
 
-#battery {
+
+#battery,
+#custom-battery {
   color: @green;
+}
+
+#battery.warning:not(.charging),
+#custom-battery.warning:not(.charging) {
+  color: @yellow;
 }
 
 @keyframes blink {
@@ -186,9 +194,11 @@ window#waybar.empty .modules-left #mpris {
   }
 }
 
-#battery.critical:not(.charging) {
+#battery.critical:not(.charging),
+#custom-battery.critical:not(.charging) {
   background-color: @red;
   color: @theme_text_color;
+  border-radius: 6px;
 	animation-name: blink;
 	animation-duration: 3.0s;
 	animation-timing-function: steps(12);

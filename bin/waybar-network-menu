@@ -787,7 +787,7 @@ def main() -> int:
     if toggle_existing():
         return 0
     runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
-    for name in ("waybar-power-menu.pid", "waybar-output-menu.pid", "waybar-input-menu.pid"):
+    for name in ("waybar-power-menu.pid", "waybar-output-menu.pid", "waybar-input-menu.pid", "waybar-battery-menu.pid"):
         other = runtime_dir / name
         if other.exists():
             try:
