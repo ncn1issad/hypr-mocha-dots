@@ -265,10 +265,10 @@ window#waybar.empty .modules-left #mpris {
   color: @sapphire;
 }
 
-#pulseaudio.bluetooth {
+#pulseaudio.output.bluetooth {
   color: @pink;
 }
-#pulseaudio.muted {
+#pulseaudio.output.muted {
   color: @red;
 }
 

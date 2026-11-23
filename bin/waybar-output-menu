@@ -1,0 +1,254 @@
+#!/usr/bin/env python3
+"""Minimal Catppuccin fuzzel output device switcher for Waybar."""
+
+from __future__ import annotations
+
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+PID_FILE = RUNTIME_DIR / "waybar-output-menu.pid"
+OTHER_PID_FILES = [
+    RUNTIME_DIR / "waybar-input-menu.pid",
+    RUNTIME_DIR / "waybar-network-menu.pid",
+    RUNTIME_DIR / "waybar-power-menu.pid",
+]
+
+
+def run_cmd(args: list[str]) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+
+def notify(summary: str, body: str = "", urgency: str = "low") -> None:
+    cmd = [
+        "notify-send",
+        "-a",
+        "Audio",
+        "-u",
+        urgency,
+        "-h",
+        "string:x-canonical-private-synchronous:waybar-audio-output",
+        summary,
+    ]
+    if body:
+        cmd.append(body)
+    subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def kill_pidfile(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        pid = int(path.read_text().strip())
+    except ValueError:
+        path.unlink(missing_ok=True)
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if b"fuzzel" in cmdline:
+            os.kill(pid, signal.SIGTERM)
+            path.unlink(missing_ok=True)
+            return True
+    except OSError:
+        pass
+    path.unlink(missing_ok=True)
+    return False
+
+
+def detect_cursor_output() -> str | None:
+    pos_res = run_cmd(["hyprctl", "cursorpos", "-j"])
+    mon_res = run_cmd(["hyprctl", "monitors", "-j"])
+    if pos_res.returncode != 0 or mon_res.returncode != 0:
+        return None
+    try:
+        pos = json.loads(pos_res.stdout)
+        monitors = json.loads(mon_res.stdout)
+        cx, cy = float(pos["x"]), float(pos["y"])
+        for mon in monitors:
+            scale = float(mon.get("scale", 1) or 1)
+            transform = int(mon.get("transform", 0) or 0)
+            w = float(mon["width"]) / scale
+            h = float(mon["height"]) / scale
+            if transform in (1, 3, 5, 7):
+                w, h = h, w
+            mx, my = float(mon["x"]), float(mon["y"])
+            if mx <= cx < mx + w and my <= cy < my + h:
+                return str(mon["name"])
+    except (ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
+def sink_icon(sink: dict[str, object]) -> str:
+    props = sink.get("properties") if isinstance(sink.get("properties"), dict) else {}
+    haystack = " ".join(
+        str(val or "")
+        for val in (
+            sink.get("name"),
+            sink.get("description"),
+            sink.get("active_port"),
+            props.get("device.bus"),
+            props.get("device.icon_name"),
+            props.get("device.form_factor"),
+        )
+    ).lower()
+
+    if "bluez" in haystack or str(props.get("device.bus", "")).lower() == "bluetooth":
+        return "󰂯"
+    if "headset" in haystack or "hands-free" in haystack or "handsfree" in haystack:
+        return "󰋎"
+    if "headphone" in haystack:
+        return "󰋋"
+    if "hdmi" in haystack or "displayport" in haystack:
+        return "󰍹"
+    return "󰕾"
+
+
+def sink_label(sink: dict[str, object]) -> str:
+    props = sink.get("properties") if isinstance(sink.get("properties"), dict) else {}
+    for candidate in (
+        sink.get("description"),
+        props.get("node.description"),
+        props.get("device.description"),
+        sink.get("name"),
+    ):
+        text = str(candidate or "").strip()
+        if text:
+            return text
+    return "Unknown Output"
+
+
+def is_available(sink: dict[str, object], default_sink: str) -> bool:
+    if str(sink.get("name", "")) == default_sink:
+        return True
+    ports = sink.get("ports")
+    if not isinstance(ports, list) or not ports:
+        return True
+    return any(
+        isinstance(port, dict) and str(port.get("availability", "")).lower() != "not available"
+        for port in ports
+    )
+
+
+def list_sinks() -> tuple[str, list[dict[str, object]]]:
+    default_sink = run_cmd(["pactl", "get-default-sink"]).stdout.strip()
+    res = run_cmd(["pactl", "--format=json", "list", "sinks"])
+    if res.returncode != 0:
+        return default_sink, []
+    try:
+        sinks = json.loads(res.stdout)
+    except json.JSONDecodeError:
+        return default_sink, []
+    if not isinstance(sinks, list):
+        return default_sink, []
+    return default_sink, [
+        s for s in sinks if isinstance(s, dict) and s.get("name") and is_available(s, default_sink)
+    ]
+
+
+def switch_sink(sink_name: str, label: str) -> None:
+    res = run_cmd(["pactl", "set-default-sink", sink_name])
+    if res.returncode != 0:
+        notify("Failed to switch output", res.stderr.strip(), "critical")
+        return
+
+    # Move any currently playing streams to the newly selected output.
+    streams_res = run_cmd(["pactl", "--format=json", "list", "sink-inputs"])
+    if streams_res.returncode == 0:
+        try:
+            streams = json.loads(streams_res.stdout)
+            if isinstance(streams, list):
+                for stream in streams:
+                    idx = stream.get("index") if isinstance(stream, dict) else None
+                    if idx is not None:
+                        run_cmd(["pactl", "move-sink-input", str(idx), sink_name])
+        except json.JSONDecodeError:
+            pass
+
+    notify("Audio Output", label)
+
+
+def run_fuzzel(entries: list[tuple[str, object]], output: str | None) -> object | None:
+    cmd = [
+        "fuzzel",
+        "--dmenu",
+        "--index",
+        "--minimal-lines",
+        f"--lines={min(12, max(1, len(entries)))}",
+        "--anchor=top-right",
+        "--x-margin=10",
+        "--y-margin=10",
+        "--width=36",
+        "--prompt=󰕾  ",
+        "--placeholder=Select output device...",
+    ]
+    if output:
+        cmd.append(f"--output={output}")
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    PID_FILE.write_text(str(proc.pid))
+    try:
+        stdout, _ = proc.communicate("\n".join(label for label, _ in entries))
+    finally:
+        try:
+            if PID_FILE.exists() and PID_FILE.read_text().strip() == str(proc.pid):
+                PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    if proc.returncode != 0:
+        return None
+    try:
+        return entries[int(stdout.strip())][1]
+    except (ValueError, IndexError):
+        return None
+
+
+def main() -> int:
+    if kill_pidfile(PID_FILE):
+        return 0
+    for other in OTHER_PID_FILES:
+        kill_pidfile(other)
+
+    output = detect_cursor_output()
+    default_sink, sinks = list_sinks()
+
+    sinks.sort(
+        key=lambda s: (
+            str(s.get("name", "")) != default_sink,
+            sink_label(s).lower(),
+        )
+    )
+
+    entries: list[tuple[str, object]] = []
+    for sink in sinks:
+        name = str(sink["name"])
+        label = sink_label(sink)
+        icon = sink_icon(sink)
+        mark = "  󰄬" if name == default_sink else ""
+        entries.append((f"{icon}  {label}{mark}", (name, label)))
+
+    if not entries:
+        entries.append(("󰖁  No output devices found", None))
+
+    selected = run_fuzzel(entries, output)
+    if not isinstance(selected, tuple):
+        return 0
+
+    sink_name, label = selected
+    switch_sink(str(sink_name), str(label))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

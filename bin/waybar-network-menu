@@ -786,15 +786,17 @@ def show_menu(output: str | None, rescan: bool = False) -> None:
 def main() -> int:
     if toggle_existing():
         return 0
-    other = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp")) / "waybar-power-menu.pid"
-    if other.exists():
-        try:
-            pid = int(other.read_text().strip())
-            if b"fuzzel" in Path(f"/proc/{pid}/cmdline").read_bytes():
-                os.kill(pid, signal.SIGTERM)
-        except (ValueError, OSError):
-            pass
-        other.unlink(missing_ok=True)
+    runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+    for name in ("waybar-power-menu.pid", "waybar-output-menu.pid", "waybar-input-menu.pid"):
+        other = runtime_dir / name
+        if other.exists():
+            try:
+                pid = int(other.read_text().strip())
+                if b"fuzzel" in Path(f"/proc/{pid}/cmdline").read_bytes():
+                    os.kill(pid, signal.SIGTERM)
+            except (ValueError, OSError):
+                pass
+            other.unlink(missing_ok=True)
     output = detect_cursor_output()
     show_menu(output, rescan=False)
     return 0

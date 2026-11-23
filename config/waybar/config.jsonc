@@ -9,9 +9,9 @@
   "margin-right": 8,
   "modules-left": ["mpris", "hyprland/window"],
   "modules-center": ["hyprland/workspaces", "clock", "idle_inhibitor"],
-  "modules-right": ["tray", "network", "backlight", "pulseaudio", "battery", "custom/power"],
+  "modules-right": ["tray", "network", "backlight", "pulseaudio#output", "pulseaudio#input", "battery", "custom/power"],
   "custom/power": {
-    "format": "󰐥",
+    "format": "󰐥<span font_family='JetBrains Mono'>&#8203;</span>",
     "tooltip-format": "Power menu (right-click: wlogout)",
     "on-click": "$HOME/.local/bin/waybar-power-menu",
     "on-click-right": "/usr/bin/wlogout"
@@ -49,7 +49,7 @@
     "tooltip-format": "<tt>{calendar}</tt>"
   },
   "idle_inhibitor": {
-    "format": "{icon}",
+    "format": "{icon}<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-icons": {
       "activated": "󰅶",
       "deactivated": "󰾪"
@@ -59,8 +59,8 @@
   },
   "network": {
     "format-wifi": "{icon} {signalStrength}%",
-    "format-ethernet": "󰈀",
-    "format-disconnected": "󰤮",
+    "format-ethernet": "󰈀<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-disconnected": "󰤮<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
     "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
     "tooltip-format-ethernet": "{ifname} · {ipaddr}",
@@ -73,18 +73,37 @@
     "format": "{icon} {percent}%",
     "format-icons": ["󰃞", "󰃟", "󰃠"]
   },
-  "pulseaudio": {
+  "pulseaudio#output": {
     "format": "{icon} {volume}%",
     "format-bluetooth": "{icon} 󰂯 {volume}%",
-    "format-bluetooth-muted": "󰖁 󰂯",
-    "format-muted": "󰖁",
+    "format-bluetooth-muted": "󰖁 󰂯<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-muted": "󰖁<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-icons": {
       "headphone": "󰋋",
       "hands-free": "󰋎",
       "headset": "󰋎",
       "default": ["󰕿", "󰖀", "󰕾"]
     },
-    "tooltip-format": "{desc} · {volume}%"
+    "scroll-step": 5,
+    "max-volume": 100,
+    "tooltip-format": "{desc} · {volume}%\nLeft: Output devices · Right: Mute",
+    "on-click": "$HOME/.local/bin/waybar-output-menu",
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
+    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+  },
+  "pulseaudio#input": {
+    "format": "{format_source}",
+    "format-bluetooth": "{format_source}",
+    "format-muted": "{format_source}",
+    "format-bluetooth-muted": "{format_source}",
+    "format-source": "󰍬 {volume}%",
+    "format-source-muted": "<span color='#f38ba8'>󰍭</span><span font_family='JetBrains Mono'>&#8203;</span>",
+    "tooltip-format": "{source_desc} · {source_volume}%\nLeft: Input devices · Right: Mute",
+    "on-click": "$HOME/.local/bin/waybar-input-menu",
+    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+    "on-scroll-up": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SOURCE@ 5%+",
+    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-"
   },
   "battery": {
     "bat": "BAT1",

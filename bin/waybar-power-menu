@@ -12,7 +12,11 @@ from pathlib import Path
 
 RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
 PID_FILE = RUNTIME_DIR / "waybar-power-menu.pid"
-OTHER_PID_FILES = [RUNTIME_DIR / "waybar-network-menu.pid"]
+OTHER_PID_FILES = [
+    RUNTIME_DIR / "waybar-network-menu.pid",
+    RUNTIME_DIR / "waybar-output-menu.pid",
+    RUNTIME_DIR / "waybar-input-menu.pid",
+]
 
 WLOGOUT_LAYOUTS = [
     Path.home() / ".config/wlogout/layout",
