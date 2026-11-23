@@ -18,6 +18,7 @@ OTHER_PID_FILES = [
     RUNTIME_DIR / "waybar-power-menu.pid",
     RUNTIME_DIR / "waybar-output-menu.pid",
     RUNTIME_DIR / "waybar-input-menu.pid",
+    RUNTIME_DIR / "waybar-bluetooth-menu.pid",
 ]
 
 PROFILE_META = {

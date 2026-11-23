@@ -177,6 +177,16 @@ window#waybar.empty .modules-left #mpris {
   color: @blue;
 }
 
+#bluetooth.off,
+#bluetooth.disabled,
+#bluetooth.no-controller {
+  color: @overlay1;
+}
+
+#bluetooth.discovering,
+#bluetooth.discoverable {
+  color: @sapphire;
+}
 
 #battery,
 #custom-battery {

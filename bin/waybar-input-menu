@@ -17,6 +17,7 @@ OTHER_PID_FILES = [
     RUNTIME_DIR / "waybar-network-menu.pid",
     RUNTIME_DIR / "waybar-power-menu.pid",
     RUNTIME_DIR / "waybar-battery-menu.pid",
+    RUNTIME_DIR / "waybar-bluetooth-menu.pid",
 ]
 
 

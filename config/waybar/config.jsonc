@@ -9,7 +9,7 @@
   "margin-right": 8,
   "modules-left": ["mpris", "hyprland/window"],
   "modules-center": ["hyprland/workspaces", "clock", "idle_inhibitor"],
-  "modules-right": ["tray", "network", "backlight", "pulseaudio#output", "pulseaudio#input", "custom/battery", "custom/power"],
+  "modules-right": ["tray", "network", "bluetooth", "backlight", "pulseaudio#output", "pulseaudio#input", "custom/battery", "custom/power"],
   "custom/power": {
     "format": "󰐥<span font_family='JetBrains Mono'>&#8203;</span>",
     "tooltip-format": "Power menu (right-click: wlogout)",
@@ -68,6 +68,25 @@
     "on-click": "$HOME/.local/bin/waybar-network-menu",
     "on-click-right": "/usr/bin/nm-connection-editor"
   },
+  "bluetooth": {
+    "format": "󰂯<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-on": "󰂯<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-off": "󰂲<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-disabled": "󰂲<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-no-controller": "󰂲<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-connected": "󰂱<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-connected-battery": "󰂱<span font_family='JetBrains Mono'>&#8203;</span>",
+    "tooltip-format": "{controller_alias} · {status}\nLeft: Bluetooth menu · Right: Toggle power",
+    "tooltip-format-on": "{controller_alias} · On (no devices)\nLeft: Bluetooth menu · Right: Power off",
+    "tooltip-format-off": "{controller_alias} · Off\nLeft: Bluetooth menu · Right: Power on",
+    "tooltip-format-disabled": "{controller_alias} · Disabled\nLeft: Bluetooth menu · Right: Enable",
+    "tooltip-format-no-controller": "Bluetooth · No controller found",
+    "tooltip-format-connected": "{controller_alias} · {num_connections} connected\n{device_enumerate}\nLeft: Bluetooth menu · Right: Power off",
+    "tooltip-format-enumerate-connected": "{device_alias}",
+    "tooltip-format-enumerate-connected-battery": "{device_alias} ({device_battery_percentage}%)",
+    "on-click": "$HOME/.local/bin/waybar-bluetooth-menu",
+    "on-click-right": "$HOME/.local/bin/waybar-bluetooth-menu --toggle-power"
+  },
   "backlight": {
     "device": "intel_backlight",
     "format": "{icon} {percent}%",
@@ -75,8 +94,8 @@
   },
   "pulseaudio#output": {
     "format": "{icon} {volume}%",
-    "format-bluetooth": "{icon} 󰂯 {volume}%",
-    "format-bluetooth-muted": "󰖁 󰂯<span font_family='JetBrains Mono'>&#8203;</span>",
+    "format-bluetooth": "󰂯 {volume}%",
+    "format-bluetooth-muted": "󰖁<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-muted": "󰖁<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-icons": {
       "headphone": "󰋋",
