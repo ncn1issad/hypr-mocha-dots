@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal Catppuccin fuzzel output device switcher for Waybar."""
+"""Minimal Catppuccin fuzzel output device & EasyEffects EQ panel for Waybar."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -20,12 +21,30 @@ OTHER_PID_FILES = [
     RUNTIME_DIR / "waybar-bluetooth-menu.pid",
 ]
 
+EASYEFFECTS_SINK_NAME = "easyeffects_sink"
+SEPARATOR = "─" * 34
+EASYEFFECTS_PRESET_DIRS = [
+    Path.home() / ".local/share/easyeffects/output",
+    Path.home() / ".config/easyeffects/output",
+]
 
-def run_cmd(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+def run_cmd(args: list[str], timeout: float | None = 5.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", f"{args[0]} not found")
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", "Command timed out")
 
 
-def notify(summary: str, body: str = "", urgency: str = "low") -> None:
+def notify(summary: str, body: str = "", urgency: str = "low", sync_id: str = "waybar-audio-output") -> None:
     cmd = [
         "notify-send",
         "-a",
@@ -33,7 +52,7 @@ def notify(summary: str, body: str = "", urgency: str = "low") -> None:
         "-u",
         urgency,
         "-h",
-        "string:x-canonical-private-synchronous:waybar-audio-output",
+        f"string:x-canonical-private-synchronous:{sync_id}",
         summary,
     ]
     if body:
@@ -83,6 +102,12 @@ def detect_cursor_output() -> str | None:
     except (ValueError, KeyError, TypeError):
         return None
     return None
+
+
+def is_easyeffects_sink(sink: dict[str, object]) -> bool:
+    name = str(sink.get("name", ""))
+    props = sink.get("properties") if isinstance(sink.get("properties"), dict) else {}
+    return name == EASYEFFECTS_SINK_NAME or str(props.get("node.name", "")) == EASYEFFECTS_SINK_NAME
 
 
 def sink_icon(sink: dict[str, object]) -> str:
@@ -136,57 +161,197 @@ def is_available(sink: dict[str, object], default_sink: str) -> bool:
     )
 
 
-def list_sinks() -> tuple[str, list[dict[str, object]]]:
+def list_sinks() -> tuple[str, list[dict[str, object]], int | None]:
     default_sink = run_cmd(["pactl", "get-default-sink"]).stdout.strip()
     res = run_cmd(["pactl", "--format=json", "list", "sinks"])
     if res.returncode != 0:
-        return default_sink, []
+        return default_sink, [], None
     try:
         sinks = json.loads(res.stdout)
     except json.JSONDecodeError:
-        return default_sink, []
+        return default_sink, [], None
     if not isinstance(sinks, list):
-        return default_sink, []
-    return default_sink, [
-        s for s in sinks if isinstance(s, dict) and s.get("name") and is_available(s, default_sink)
-    ]
+        return default_sink, [], None
+
+    ee_sink_index: int | None = None
+    filtered: list[dict[str, object]] = []
+    for sink in sinks:
+        if not isinstance(sink, dict) or not sink.get("name"):
+            continue
+        if is_easyeffects_sink(sink):
+            if isinstance(sink.get("index"), int):
+                ee_sink_index = int(sink["index"])
+            continue
+        if is_available(sink, default_sink):
+            filtered.append(sink)
+    return default_sink, filtered, ee_sink_index
 
 
-def switch_sink(sink_name: str, label: str) -> None:
+def switch_sink(sink_name: str, label: str, ee_sink_index: int | None) -> None:
     res = run_cmd(["pactl", "set-default-sink", sink_name])
     if res.returncode != 0:
         notify("Failed to switch output", res.stderr.strip(), "critical")
         return
 
-    # Move any currently playing streams to the newly selected output.
+    # Move non-EasyEffects playback streams to the newly selected output.
+    # Streams routed into easyeffects_sink stay there; EasyEffects follows the default sink.
     streams_res = run_cmd(["pactl", "--format=json", "list", "sink-inputs"])
     if streams_res.returncode == 0:
         try:
             streams = json.loads(streams_res.stdout)
             if isinstance(streams, list):
                 for stream in streams:
-                    idx = stream.get("index") if isinstance(stream, dict) else None
-                    if idx is not None:
-                        run_cmd(["pactl", "move-sink-input", str(idx), sink_name])
+                    if not isinstance(stream, dict):
+                        continue
+                    idx = stream.get("index")
+                    stream_sink = stream.get("sink")
+                    if idx is None:
+                        continue
+                    if ee_sink_index is not None and stream_sink == ee_sink_index:
+                        continue
+                    props = stream.get("properties") if isinstance(stream.get("properties"), dict) else {}
+                    app_id = str(props.get("application.id", "")).lower()
+                    node_name = str(props.get("node.name", "")).lower()
+                    if "easyeffects" in app_id or node_name.startswith("ee_"):
+                        continue
+                    run_cmd(["pactl", "move-sink-input", str(idx), sink_name])
         except json.JSONDecodeError:
             pass
 
     notify("Audio Output", label)
 
 
-def run_fuzzel(entries: list[tuple[str, object]], output: str | None) -> object | None:
+def easyeffects_installed() -> bool:
+    return shutil.which("easyeffects") is not None
+
+
+def easyeffects_running() -> bool:
+    res = run_cmd(["pgrep", "-u", str(os.getuid()), "-x", "easyeffects"], timeout=2.0)
+    return res.returncode == 0
+
+
+def start_easyeffects_service() -> bool:
+    res = run_cmd(["systemctl", "--user", "start", "easyeffects.service"], timeout=5.0)
+    if res.returncode == 0:
+        return True
+    try:
+        subprocess.Popen(
+            ["easyeffects", "--service-mode", "--hide-window"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except OSError:
+        return False
+
+
+def get_eq_state() -> tuple[bool, bool | None, str]:
+    if not easyeffects_running():
+        return False, None, ""
+
+    bypassed: bool | None = None
+    bypass_res = run_cmd(["easyeffects", "-b", "3"], timeout=2.5)
+    if bypass_res.returncode == 0:
+        val = bypass_res.stdout.strip()
+        if val == "1":
+            bypassed = True
+        elif val == "2":
+            bypassed = False
+
+    active_preset = ""
+    preset_res = run_cmd(["easyeffects", "-a", "output"], timeout=2.5)
+    if preset_res.returncode == 0:
+        active_preset = preset_res.stdout.strip()
+
+    return True, bypassed, active_preset
+
+
+def list_output_presets() -> list[str]:
+    names: set[str] = set()
+    for directory in EASYEFFECTS_PRESET_DIRS:
+        if not directory.is_dir():
+            continue
+        for preset_file in directory.glob("*.json"):
+            if preset_file.is_file():
+                names.add(preset_file.stem)
+    return sorted(names, key=str.lower)
+
+
+def set_eq_bypass(enable_bypass: bool) -> bool:
+    flag = "1" if enable_bypass else "2"
+    res = run_cmd(["easyeffects", "-b", flag], timeout=3.0)
+    if res.returncode != 0:
+        notify("Equalizer error", res.stderr.strip() or "Failed to change bypass state", "critical", "waybar-audio-eq")
+        return False
+    notify("Equalizer", "Bypassed" if enable_bypass else "Enabled", sync_id="waybar-audio-eq")
+    return True
+
+
+def toggle_eq_bypass() -> int:
+    if not easyeffects_installed():
+        notify("Equalizer", "EasyEffects is not installed", "critical", "waybar-audio-eq")
+        return 1
+    if not easyeffects_running():
+        if start_easyeffects_service():
+            notify("Equalizer", "Started EasyEffects service", sync_id="waybar-audio-eq")
+            return 0
+        notify("Equalizer", "Failed to start EasyEffects", "critical", "waybar-audio-eq")
+        return 1
+
+    _, bypassed, _ = get_eq_state()
+    if bypassed is None:
+        res = run_cmd(["easyeffects", "--bypass-toggle"], timeout=3.0)
+        if res.returncode != 0:
+            notify("Equalizer error", res.stderr.strip() or "Failed to toggle EQ", "critical", "waybar-audio-eq")
+            return 1
+        _, new_bypassed, _ = get_eq_state()
+        state = "Bypassed" if new_bypassed else "Enabled"
+        notify("Equalizer", state, sync_id="waybar-audio-eq")
+        return 0
+
+    return 0 if set_eq_bypass(not bypassed) else 1
+
+
+def load_eq_preset(preset: str, currently_bypassed: bool | None) -> None:
+    res = run_cmd(["easyeffects", "-l", preset], timeout=3.0)
+    if res.returncode != 0:
+        notify("Failed to load preset", res.stderr.strip() or preset, "critical", "waybar-audio-eq")
+        return
+    if currently_bypassed:
+        run_cmd(["easyeffects", "-b", "2"], timeout=2.5)
+    notify("Equalizer Preset", preset, sync_id="waybar-audio-eq")
+
+
+def open_easyeffects_gui() -> None:
+    subprocess.Popen(
+        ["easyeffects"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def run_fuzzel(
+    entries: list[tuple[str, object]],
+    output: str | None,
+    *,
+    prompt: str = "󰕾  ",
+    placeholder: str = "Select output or EQ...",
+    max_lines: int = 14,
+) -> object | None:
     cmd = [
         "fuzzel",
         "--dmenu",
         "--index",
         "--minimal-lines",
-        f"--lines={min(12, max(1, len(entries)))}",
+        f"--lines={min(max_lines, max(1, len(entries)))}",
         "--anchor=top-right",
         "--x-margin=10",
         "--y-margin=10",
-        "--width=36",
-        "--prompt=󰕾  ",
-        "--placeholder=Select output device...",
+        "--width=38",
+        f"--prompt={prompt}",
+        f"--placeholder={placeholder}",
     ]
     if output:
         cmd.append(f"--output={output}")
@@ -216,14 +381,44 @@ def run_fuzzel(entries: list[tuple[str, object]], output: str | None) -> object 
         return None
 
 
-def main() -> int:
-    if kill_pidfile(PID_FILE):
-        return 0
-    for other in OTHER_PID_FILES:
-        kill_pidfile(other)
+def show_preset_menu(output: str | None, active_preset: str, bypassed: bool | None) -> None:
+    presets = list_output_presets()
+    entries: list[tuple[str, object]] = []
 
-    output = detect_cursor_output()
-    default_sink, sinks = list_sinks()
+    for preset in presets:
+        mark = "  󰄬" if preset == active_preset else ""
+        entries.append((f"󰺢  {preset}{mark}", ("preset", preset)))
+
+    if not presets:
+        entries.append(("󰒓  No presets saved — Open Equalizer...", ("open_eq", None)))
+    else:
+        entries.append((SEPARATOR, ("separator", None)))
+        entries.append(("󰒓  Open Equalizer...", ("open_eq", None)))
+    entries.append(("󰁍  Back", ("back", None)))
+
+    choice = run_fuzzel(
+        entries,
+        output,
+        prompt="󰺢  ",
+        placeholder="Select EQ preset...",
+        max_lines=12,
+    )
+    if not isinstance(choice, tuple):
+        return
+
+    action, payload = choice
+    if action == "preset":
+        load_eq_preset(str(payload), bypassed)
+    elif action == "open_eq":
+        open_easyeffects_gui()
+    elif action == "back":
+        show_main_menu(output)
+    elif action == "separator":
+        show_preset_menu(output, active_preset, bypassed)
+
+
+def show_main_menu(output: str | None) -> None:
+    default_sink, sinks, ee_sink_index = list_sinks()
 
     sinks.sort(
         key=lambda s: (
@@ -238,17 +433,64 @@ def main() -> int:
         label = sink_label(sink)
         icon = sink_icon(sink)
         mark = "  󰄬" if name == default_sink else ""
-        entries.append((f"{icon}  {label}{mark}", (name, label)))
+        entries.append((f"{icon}  {label}{mark}", ("sink", (name, label))))
 
     if not entries:
-        entries.append(("󰖁  No output devices found", None))
+        entries.append(("󰖁  No output devices found", ("noop", None)))
+
+    bypassed: bool | None = None
+    active_preset = ""
+    if easyeffects_installed():
+        entries.append((SEPARATOR, ("separator", None)))
+        running, bypassed, active_preset = get_eq_state()
+        if running:
+            preset_label = active_preset if active_preset else "None"
+            entries.append((f"󰺢  EQ Preset: {preset_label}...", ("eq_presets", None)))
+            if bypassed:
+                entries.append(("󰔡  EQ: Bypassed (Enable)", ("eq_enable", None)))
+            else:
+                entries.append(("󰔢  EQ: Active (Bypass)", ("eq_bypass", None)))
+            entries.append(("󰒓  Open Equalizer...", ("open_eq", None)))
+        else:
+            entries.append(("󰺢  Start Equalizer Service", ("eq_start", None)))
+            entries.append(("󰒓  Open Equalizer...", ("open_eq", None)))
 
     selected = run_fuzzel(entries, output)
     if not isinstance(selected, tuple):
-        return 0
+        return
 
-    sink_name, label = selected
-    switch_sink(str(sink_name), str(label))
+    action, payload = selected
+    if action == "sink" and isinstance(payload, tuple):
+        sink_name, label = payload
+        switch_sink(str(sink_name), str(label), ee_sink_index)
+    elif action == "eq_presets":
+        show_preset_menu(output, active_preset, bypassed)
+    elif action == "eq_bypass":
+        set_eq_bypass(True)
+    elif action == "eq_enable":
+        set_eq_bypass(False)
+    elif action == "eq_start":
+        if start_easyeffects_service():
+            notify("Equalizer", "Started EasyEffects service", sync_id="waybar-audio-eq")
+        else:
+            notify("Equalizer", "Failed to start EasyEffects", "critical", "waybar-audio-eq")
+    elif action == "open_eq":
+        open_easyeffects_gui()
+    elif action == "separator":
+        show_main_menu(output)
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--toggle-eq":
+        return toggle_eq_bypass()
+
+    if kill_pidfile(PID_FILE):
+        return 0
+    for other in OTHER_PID_FILES:
+        kill_pidfile(other)
+
+    output = detect_cursor_output()
+    show_main_menu(output)
     return 0
 
 

@@ -113,10 +113,10 @@
     },
     "scroll-step": 5,
     "max-volume": 100,
-    "tooltip-format": "{desc} · {volume}%\nLeft: Output devices · Right: Mute",
+    "tooltip-format": "{desc} · {volume}%\nLeft: Output & EQ · Middle: Toggle EQ · Right: Mute",
     "on-click": "$HOME/.local/bin/waybar-output-menu",
     "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
-    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle"
+    "on-click-middle": "$HOME/.local/bin/waybar-output-menu --toggle-eq"
   },
   "pulseaudio#input": {
     "format": "{format_source}",
@@ -125,10 +125,10 @@
     "format-bluetooth-muted": "{format_source}",
     "format-source": "󰍬 {volume}%",
     "format-source-muted": "<span color='#f38ba8'>󰍭</span><span font_family='JetBrains Mono'>&#8203;</span>",
-    "tooltip-format": "{source_desc} · {source_volume}%\nLeft: Input devices · Right: Mute",
+    "tooltip-format": "{source_desc} · {source_volume}%\nLeft: Input & Mic FX · Middle: Toggle FX · Right: Mute",
     "on-click": "$HOME/.local/bin/waybar-input-menu",
     "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
-    "on-click-middle": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
+    "on-click-middle": "$HOME/.local/bin/waybar-input-menu --toggle-fx",
     "on-scroll-up": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SOURCE@ 5%+",
     "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-"
   },

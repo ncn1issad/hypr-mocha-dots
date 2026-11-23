@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal Catppuccin fuzzel input (microphone) device switcher for Waybar."""
+"""Minimal Catppuccin fuzzel input (microphone) device & EasyEffects FX panel for Waybar."""
 
 from __future__ import annotations
 
 import json
 import os
+import shutil
 import signal
 import subprocess
 import sys
@@ -20,12 +21,30 @@ OTHER_PID_FILES = [
     RUNTIME_DIR / "waybar-bluetooth-menu.pid",
 ]
 
+EASYEFFECTS_SOURCE_NAME = "easyeffects_source"
+SEPARATOR = "─" * 34
+EASYEFFECTS_INPUT_PRESET_DIRS = [
+    Path.home() / ".local/share/easyeffects/input",
+    Path.home() / ".config/easyeffects/input",
+]
 
-def run_cmd(args: list[str]) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(args, text=True, capture_output=True, check=False)
+
+def run_cmd(args: list[str], timeout: float | None = 5.0) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            args,
+            text=True,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, "", f"{args[0]} not found")
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, "", "Command timed out")
 
 
-def notify(summary: str, body: str = "", urgency: str = "low") -> None:
+def notify(summary: str, body: str = "", urgency: str = "low", sync_id: str = "waybar-audio-input") -> None:
     cmd = [
         "notify-send",
         "-a",
@@ -33,7 +52,7 @@ def notify(summary: str, body: str = "", urgency: str = "low") -> None:
         "-u",
         urgency,
         "-h",
-        "string:x-canonical-private-synchronous:waybar-audio-input",
+        f"string:x-canonical-private-synchronous:{sync_id}",
         summary,
     ]
     if body:
@@ -85,13 +104,15 @@ def detect_cursor_output() -> str | None:
     return None
 
 
-def is_monitor_source(source: dict[str, object]) -> bool:
+def is_monitor_or_virtual_source(source: dict[str, object]) -> bool:
     name = str(source.get("name", ""))
     props = source.get("properties") if isinstance(source.get("properties"), dict) else {}
     return (
         bool(source.get("monitor_of"))
         or str(props.get("device.class", "")).lower() == "monitor"
         or name.endswith(".monitor")
+        or name == EASYEFFECTS_SOURCE_NAME
+        or str(props.get("node.name", "")) == EASYEFFECTS_SOURCE_NAME
     )
 
 
@@ -160,7 +181,7 @@ def list_sources() -> tuple[str, list[dict[str, object]]]:
         for s in sources
         if isinstance(s, dict)
         and s.get("name")
-        and not is_monitor_source(s)
+        and not is_monitor_or_virtual_source(s)
         and is_available(s, default_source)
     ]
 
@@ -171,7 +192,7 @@ def switch_source(source_name: str, label: str, valid_source_indices: set[int]) 
         notify("Failed to switch input", res.stderr.strip(), "critical")
         return
 
-    # Move any active microphone capture streams (skipping monitor/loopback streams).
+    # Move active non-EasyEffects capture streams (skipping monitor/loopback and EasyEffects streams).
     streams_res = run_cmd(["pactl", "--format=json", "list", "source-outputs"])
     if streams_res.returncode == 0:
         try:
@@ -182,27 +203,168 @@ def switch_source(source_name: str, label: str, valid_source_indices: set[int]) 
                         continue
                     idx = stream.get("index")
                     src_idx = stream.get("source")
-                    if idx is not None and src_idx in valid_source_indices:
-                        run_cmd(["pactl", "move-source-output", str(idx), source_name])
+                    if idx is None or src_idx not in valid_source_indices:
+                        continue
+                    props = stream.get("properties") if isinstance(stream.get("properties"), dict) else {}
+                    app_id = str(props.get("application.id", "")).lower()
+                    node_name = str(props.get("node.name", "")).lower()
+                    if "easyeffects" in app_id or node_name.startswith("ee_"):
+                        continue
+                    run_cmd(["pactl", "move-source-output", str(idx), source_name])
         except json.JSONDecodeError:
             pass
 
     notify("Audio Input", label)
 
 
-def run_fuzzel(entries: list[tuple[str, object]], output: str | None) -> object | None:
+def easyeffects_installed() -> bool:
+    return shutil.which("easyeffects") is not None
+
+
+def easyeffects_running() -> bool:
+    res = run_cmd(["pgrep", "-u", str(os.getuid()), "-x", "easyeffects"], timeout=2.0)
+    return res.returncode == 0
+
+
+def start_easyeffects_service() -> bool:
+    res = run_cmd(["systemctl", "--user", "start", "easyeffects.service"], timeout=5.0)
+    if res.returncode == 0:
+        return True
+    try:
+        subprocess.Popen(
+            ["easyeffects", "--service-mode", "--hide-window"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return True
+    except OSError:
+        return False
+
+
+def get_fx_state() -> tuple[bool, bool | None, bool | None, str]:
+    if not easyeffects_running():
+        return False, None, None, ""
+
+    bypassed: bool | None = None
+    bypass_res = run_cmd(["easyeffects", "-b", "3"], timeout=2.5)
+    if bypass_res.returncode == 0:
+        val = bypass_res.stdout.strip()
+        if val == "1":
+            bypassed = True
+        elif val == "2":
+            bypassed = False
+
+    monitoring: bool | None = None
+    mon_res = run_cmd(["easyeffects", "--microphone-monitoring", "3"], timeout=2.5)
+    if mon_res.returncode == 0:
+        val = mon_res.stdout.strip()
+        if val == "1":
+            monitoring = True
+        elif val == "2":
+            monitoring = False
+
+    active_preset = ""
+    preset_res = run_cmd(["easyeffects", "-a", "input"], timeout=2.5)
+    if preset_res.returncode == 0:
+        active_preset = preset_res.stdout.strip()
+
+    return True, bypassed, monitoring, active_preset
+
+
+def list_input_presets() -> list[str]:
+    names: set[str] = set()
+    for directory in EASYEFFECTS_INPUT_PRESET_DIRS:
+        if not directory.is_dir():
+            continue
+        for preset_file in directory.glob("*.json"):
+            if preset_file.is_file():
+                names.add(preset_file.stem)
+    return sorted(names, key=str.lower)
+
+
+def set_fx_bypass(enable_bypass: bool) -> bool:
+    flag = "1" if enable_bypass else "2"
+    res = run_cmd(["easyeffects", "-b", flag], timeout=3.0)
+    if res.returncode != 0:
+        notify("Audio Effects error", res.stderr.strip() or "Failed to change bypass state", "critical", "waybar-audio-eq")
+        return False
+    notify("Audio Effects", "Bypassed" if enable_bypass else "Enabled", sync_id="waybar-audio-eq")
+    return True
+
+
+def toggle_fx_bypass() -> int:
+    if not easyeffects_installed():
+        notify("Audio Effects", "EasyEffects is not installed", "critical", "waybar-audio-eq")
+        return 1
+    if not easyeffects_running():
+        if start_easyeffects_service():
+            notify("Audio Effects", "Started EasyEffects service", sync_id="waybar-audio-eq")
+            return 0
+        notify("Audio Effects", "Failed to start EasyEffects", "critical", "waybar-audio-eq")
+        return 1
+
+    _, bypassed, _, _ = get_fx_state()
+    if bypassed is None:
+        res = run_cmd(["easyeffects", "--bypass-toggle"], timeout=3.0)
+        if res.returncode != 0:
+            notify("Audio Effects error", res.stderr.strip() or "Failed to toggle FX", "critical", "waybar-audio-eq")
+            return 1
+        _, new_bypassed, _, _ = get_fx_state()
+        notify("Audio Effects", "Bypassed" if new_bypassed else "Enabled", sync_id="waybar-audio-eq")
+        return 0
+
+    return 0 if set_fx_bypass(not bypassed) else 1
+
+
+def set_mic_monitoring(enable: bool) -> None:
+    flag = "1" if enable else "2"
+    res = run_cmd(["easyeffects", "--microphone-monitoring", flag], timeout=3.0)
+    if res.returncode != 0:
+        notify("Mic Monitoring error", res.stderr.strip() or "Failed to toggle monitoring", "critical", "waybar-audio-input")
+        return
+    notify("Mic Monitoring", "Enabled" if enable else "Disabled", sync_id="waybar-audio-input")
+
+
+def load_input_preset(preset: str, currently_bypassed: bool | None) -> None:
+    res = run_cmd(["easyeffects", "-l", preset], timeout=3.0)
+    if res.returncode != 0:
+        notify("Failed to load mic preset", res.stderr.strip() or preset, "critical", "waybar-audio-input")
+        return
+    if currently_bypassed:
+        run_cmd(["easyeffects", "-b", "2"], timeout=2.5)
+    notify("Mic FX Preset", preset, sync_id="waybar-audio-input")
+
+
+def open_easyeffects_gui() -> None:
+    subprocess.Popen(
+        ["easyeffects"],
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+        start_new_session=True,
+    )
+
+
+def run_fuzzel(
+    entries: list[tuple[str, object]],
+    output: str | None,
+    *,
+    prompt: str = "󰍬  ",
+    placeholder: str = "Select input or Mic FX...",
+    max_lines: int = 14,
+) -> object | None:
     cmd = [
         "fuzzel",
         "--dmenu",
         "--index",
         "--minimal-lines",
-        f"--lines={min(12, max(1, len(entries)))}",
+        f"--lines={min(max_lines, max(1, len(entries)))}",
         "--anchor=top-right",
         "--x-margin=10",
         "--y-margin=10",
-        "--width=36",
-        "--prompt=󰍬  ",
-        "--placeholder=Select input device...",
+        "--width=38",
+        f"--prompt={prompt}",
+        f"--placeholder={placeholder}",
     ]
     if output:
         cmd.append(f"--output={output}")
@@ -232,13 +394,43 @@ def run_fuzzel(entries: list[tuple[str, object]], output: str | None) -> object 
         return None
 
 
-def main() -> int:
-    if kill_pidfile(PID_FILE):
-        return 0
-    for other in OTHER_PID_FILES:
-        kill_pidfile(other)
+def show_preset_menu(output: str | None, active_preset: str, bypassed: bool | None) -> None:
+    presets = list_input_presets()
+    entries: list[tuple[str, object]] = []
 
-    output = detect_cursor_output()
+    for preset in presets:
+        mark = "  󰄬" if preset == active_preset else ""
+        entries.append((f"󰺢  {preset}{mark}", ("preset", preset)))
+
+    if not presets:
+        entries.append(("󰒓  No mic presets saved — Open EasyEffects...", ("open_fx", None)))
+    else:
+        entries.append((SEPARATOR, ("separator", None)))
+        entries.append(("󰒓  Open EasyEffects...", ("open_fx", None)))
+    entries.append(("󰁍  Back", ("back", None)))
+
+    choice = run_fuzzel(
+        entries,
+        output,
+        prompt="󰺢  ",
+        placeholder="Select Mic FX preset...",
+        max_lines=12,
+    )
+    if not isinstance(choice, tuple):
+        return
+
+    action, payload = choice
+    if action == "preset":
+        load_input_preset(str(payload), bypassed)
+    elif action == "open_fx":
+        open_easyeffects_gui()
+    elif action == "back":
+        show_main_menu(output)
+    elif action == "separator":
+        show_preset_menu(output, active_preset, bypassed)
+
+
+def show_main_menu(output: str | None) -> None:
     default_source, sources = list_sources()
     valid_indices = {int(s["index"]) for s in sources if isinstance(s.get("index"), int)}
 
@@ -255,17 +447,72 @@ def main() -> int:
         label = source_label(src)
         icon = source_icon(src)
         mark = "  󰄬" if name == default_source else ""
-        entries.append((f"{icon}  {label}{mark}", (name, label)))
+        entries.append((f"{icon}  {label}{mark}", ("source", (name, label))))
 
     if not entries:
-        entries.append(("󰍭  No input devices found", None))
+        entries.append(("󰍭  No input devices found", ("noop", None)))
+
+    bypassed: bool | None = None
+    active_preset = ""
+    if easyeffects_installed():
+        entries.append((SEPARATOR, ("separator", None)))
+        running, bypassed, monitoring, active_preset = get_fx_state()
+        if running:
+            preset_label = active_preset if active_preset else "None"
+            entries.append((f"󰺢  Mic FX Preset: {preset_label}...", ("fx_presets", None)))
+            if monitoring:
+                entries.append(("󰋋  Mic Monitor: On (Disable)", ("mon_off", None)))
+            else:
+                entries.append(("󰋋  Mic Monitor: Off (Enable)", ("mon_on", None)))
+            if bypassed:
+                entries.append(("󰔡  Effects: Bypassed (Enable)", ("fx_enable", None)))
+            else:
+                entries.append(("󰔢  Effects: Active (Bypass)", ("fx_bypass", None)))
+            entries.append(("󰒓  Open EasyEffects...", ("open_fx", None)))
+        else:
+            entries.append(("󰺢  Start EasyEffects Service", ("fx_start", None)))
+            entries.append(("󰒓  Open EasyEffects...", ("open_fx", None)))
 
     selected = run_fuzzel(entries, output)
     if not isinstance(selected, tuple):
-        return 0
+        return
 
-    source_name, label = selected
-    switch_source(str(source_name), str(label), valid_indices)
+    action, payload = selected
+    if action == "source" and isinstance(payload, tuple):
+        source_name, label = payload
+        switch_source(str(source_name), str(label), valid_indices)
+    elif action == "fx_presets":
+        show_preset_menu(output, active_preset, bypassed)
+    elif action == "mon_on":
+        set_mic_monitoring(True)
+    elif action == "mon_off":
+        set_mic_monitoring(False)
+    elif action == "fx_bypass":
+        set_fx_bypass(True)
+    elif action == "fx_enable":
+        set_fx_bypass(False)
+    elif action == "fx_start":
+        if start_easyeffects_service():
+            notify("Audio Effects", "Started EasyEffects service", sync_id="waybar-audio-eq")
+        else:
+            notify("Audio Effects", "Failed to start EasyEffects", "critical", "waybar-audio-eq")
+    elif action == "open_fx":
+        open_easyeffects_gui()
+    elif action == "separator":
+        show_main_menu(output)
+
+
+def main() -> int:
+    if len(sys.argv) > 1 and sys.argv[1] == "--toggle-fx":
+        return toggle_fx_bypass()
+
+    if kill_pidfile(PID_FILE):
+        return 0
+    for other in OTHER_PID_FILES:
+        kill_pidfile(other)
+
+    output = detect_cursor_output()
+    show_main_menu(output)
     return 0
 
 

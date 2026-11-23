@@ -393,6 +393,16 @@ hl.window_rule({
     float = true,
 })
 
+-- EasyEffects equalizer windowrule
+hl.window_rule({
+    name   = "float-easyeffects",
+    match  = { class = "^com\\.github\\.wwmm\\.easyeffects$" },
+
+    float  = true,
+    center = true,
+    size   = "1100 720",
+})
+
 
 ------------------------
 ---- LOCAL OVERRIDES ---

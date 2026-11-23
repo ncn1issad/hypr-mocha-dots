@@ -1,0 +1,15 @@
+[Unit]
+Description=EasyEffects background audio processing service
+PartOf=graphical-session.target
+After=graphical-session.target pipewire.service wireplumber.service
+Wants=pipewire.service wireplumber.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/easyeffects --service-mode --hide-window
+ExecStop=/usr/bin/easyeffects --quit
+Restart=on-failure
+RestartSec=2
+
+[Install]
+WantedBy=graphical-session.target
