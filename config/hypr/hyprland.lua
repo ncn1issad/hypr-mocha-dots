@@ -233,6 +233,18 @@ hl.config({
 })
 
 
+------------------
+---- XWAYLAND ----
+------------------
+
+-- Render XWayland apps at native 1:1 pixels instead of compositor-upscaling on scaled displays
+hl.config({
+    xwayland = {
+        force_zero_scaling = true,
+    },
+})
+
+
 ----------------
 ---- LAYERS ----
 ----------------
