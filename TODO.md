@@ -7,7 +7,7 @@ Roadmap for prototyping remaining shell features and evolving this setup into a 
 - [x] **Screenshots** — region / window / monitor / all-monitors capture (`grim` + `slurp`), copy to clipboard by default + optional save toggle + thumbnail notification via `bin/screenshot` and Fuzzel menu (`Print` / `Super + Print`)
 - [ ] **Idle & auto-lock (`hypridle`)** — dim screen, lock via `hyprlock`, DPMS off, and suspend timeouts wired up so Waybar's `idle_inhibitor` has an idle daemon to inhibit
 - [ ] **Polkit auth agent** — autostart `hyprpolkitagent` for GUI privilege prompts
-- [?] **Notification daemon config** *(optional)* — minimal toast-only daemon config (e.g. `mako`) to match the theme without a notification center
+- [x] **Notification daemon config** *(optional)* — minimal toast-only `dunst` config (`config/dunst/dunstrc`) with decoupled Catppuccin Mocha Lavender theme drop-in (`config/dunst/dunstrc.d/50-catppuccin-mocha.conf`), Fuzzel action menu, and hover-to-pause
 
 ## Architecture & Prod Rewrite
 - [ ] **Rewrite scripts in a compiled language** — consolidate `bin/*` Python/Bash prototypes into a single fast binary with subcommands (zero interpreter startup delay on menu clicks)

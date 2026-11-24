@@ -1,0 +1,100 @@
+# Minimal toast-only Dunst configuration for Hyprland (Wayland).
+# Colors and typography live in dunstrc.d/50-catppuccin-mocha.conf so themes
+# can be swapped independently of shell behavior.
+
+[global]
+    ### Display ###
+    monitor = 0
+    follow = mouse
+    layer = top
+    force_xwayland = false
+
+    ### Geometry ###
+    width = (260, 360)
+    height = (0, 220)
+    origin = top-right
+    offset = (10, 10)
+    notification_limit = 5
+    indicate_hidden = yes
+
+    ### Layout ###
+    padding = 12
+    horizontal_padding = 14
+    text_icon_padding = 12
+    frame_width = 2
+    gap_size = 8
+    corner_radius = 10
+    corners = all
+    sort = update
+
+    ### Progress Bar ###
+    progress_bar = true
+    progress_bar_height = 8
+    progress_bar_frame_width = 1
+    progress_bar_min_width = 160
+    progress_bar_max_width = 320
+    progress_bar_corner_radius = 4
+    progress_bar_corners = all
+
+    ### Text ###
+    line_height = 2
+    markup = full
+    format = "<b>%s</b>\n%b"
+    alignment = left
+    vertical_alignment = center
+    show_age_threshold = 60
+    ellipsize = end
+    ignore_newline = no
+    stack_duplicates = true
+    hide_duplicate_count = false
+    show_indicators = yes
+    enable_posix_regex = true
+
+    ### Icons ###
+    enable_recursive_icon_lookup = true
+    icon_position = left
+    min_icon_size = 32
+    max_icon_size = 72
+    icon_corner_radius = 6
+    icon_corners = all
+
+    ### Toast-only History ###
+    sticky_history = no
+    history_length = 10
+
+    ### Integration & Actions ###
+    dmenu = /usr/bin/fuzzel --dmenu --prompt="󰂚  "
+    browser = /usr/bin/xdg-open
+    always_run_script = true
+    ignore_dbusclose = false
+
+    mouse_left_click = do_action, close_current
+    mouse_middle_click = close_all
+    mouse_right_click = close_current
+
+[experimental]
+    per_monitor_dpi = false
+    pause_on_mouse_over = true
+
+[urgency_low]
+    timeout = 4
+    default_icon = dialog-information
+
+[urgency_normal]
+    timeout = 6
+    override_pause_level = 30
+    default_icon = dialog-information
+
+[urgency_critical]
+    timeout = 0
+    override_pause_level = 60
+    default_icon = dialog-warning
+
+[transient_history_ignore]
+    match_transient = yes
+    history_ignore = yes
+
+[screenshot]
+    appname = "Screenshot"
+    timeout = 4
+    history_ignore = yes

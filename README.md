@@ -19,6 +19,7 @@
 | **WM** | Hyprland (`hyprland.lua`) | Lua config with optional gitignored `local.lua` overrides |
 | **Bar** | Waybar | MPRIS, Bluetooth, Network, split audio, custom battery & power |
 | **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, clipboard history, power profiles & session |
+| **Notifications** | Dunst | Minimal toast-only Wayland notifications (`dunstrc` + swappable `dunstrc.d/` Catppuccin Mocha theme drop-in) |
 | **Terminal** | Kitty | Catppuccin Mocha + JetBrains Mono |
 | **Lock / Power** | Hyprlock · wlogout | Wallpaper-synced lockscreen with media controls, custom lavender icons |
 | **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with Fuzzel desktop right-click menu to skip or remove |
@@ -29,7 +30,7 @@
 ```text
 .
 ├── bin/        # Scripts linked into ~/.local/bin (waybar menus, wallpaper rotation, hyprlock media)
-└── config/     # Configs linked into ~/.config (hypr, waybar, fuzzel, kitty, wlogout, btop, systemd, uwsm, fontconfig)
+└── config/     # Configs linked into ~/.config (hypr, waybar, fuzzel, dunst, kitty, wlogout, btop, systemd, uwsm, fontconfig)
 ```
 
 ## Quick Setup
