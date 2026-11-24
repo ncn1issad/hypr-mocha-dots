@@ -3,11 +3,11 @@
 Roadmap for prototyping remaining shell features and evolving this setup into a standalone, theme-agnostic Waybar + Fuzzel shell backend.
 
 ## Prototype Features
-- [x] **Clipboard history** — background watcher (`bin/clipboard-history watch` via `wl-paste --watch` + SQLite) + Fuzzel history picker (`Super + Shift + V`, with pin, delete, image previews, and clear confirmation)
+- [x] **Clipboard history** — background watchers (`wl-paste --type text/image --watch cliphist store`) + Waybar center pill icon + Fuzzel history picker (`Super + Shift + V`, with delete & clear confirmation)
 - [x] **Screenshots** — region / window / monitor / all-monitors capture (`grim` + `slurp`), copy to clipboard by default + optional save toggle + thumbnail notification via `bin/screenshot` and Fuzzel menu (`Print` / `Super + Print`)
 - [ ] **Idle & auto-lock (`hypridle`)** — dim screen, lock via `hyprlock`, DPMS off, and suspend timeouts wired up so Waybar's `idle_inhibitor` has an idle daemon to inhibit
 - [ ] **Polkit auth agent** — autostart `hyprpolkitagent` for GUI privilege prompts
-- [ ] **Notification daemon config** *(optional)* — minimal toast-only daemon config (e.g. `mako`) to match the theme without a notification center
+- [?] **Notification daemon config** *(optional)* — minimal toast-only daemon config (e.g. `mako`) to match the theme without a notification center
 
 ## Architecture & Prod Rewrite
 - [ ] **Rewrite scripts in a compiled language** — consolidate `bin/*` Python/Bash prototypes into a single fast binary with subcommands (zero interpreter startup delay on menu clicks)

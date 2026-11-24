@@ -21,6 +21,7 @@ OTHER_PID_FILES = [
     RUNTIME_DIR / "waybar-output-menu.pid",
     RUNTIME_DIR / "waybar-input-menu.pid",
     RUNTIME_DIR / "waybar-battery-menu.pid",
+    RUNTIME_DIR / "waybar-clipboard-menu.pid",
 ]
 
 ANSI_RE = re.compile(r"\x1b\[[0-9;?]*[ -/]*[@-~]|\r")

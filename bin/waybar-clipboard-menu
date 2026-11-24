@@ -1,0 +1,341 @@
+#!/usr/bin/env python3
+"""Catppuccin fuzzel clipboard history menu for Waybar & Hyprland, backed by cliphist."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import os
+import signal
+import subprocess
+import sys
+from pathlib import Path
+
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+PID_FILE = RUNTIME_DIR / "waybar-clipboard-menu.pid"
+OTHER_PID_FILES = [
+    RUNTIME_DIR / "waybar-network-menu.pid",
+    RUNTIME_DIR / "waybar-power-menu.pid",
+    RUNTIME_DIR / "waybar-output-menu.pid",
+    RUNTIME_DIR / "waybar-input-menu.pid",
+    RUNTIME_DIR / "waybar-battery-menu.pid",
+    RUNTIME_DIR / "waybar-bluetooth-menu.pid",
+]
+
+EXIT_ACCEPT = 0
+EXIT_DELETE = 10  # custom-1: Shift+Delete
+EXIT_CLEAR = 11   # custom-2: Control+Shift+Delete
+
+
+def run_cmd(
+    args: list[str],
+    input_bytes: bytes | None = None,
+    timeout: float | None = 5.0,
+) -> subprocess.CompletedProcess[bytes]:
+    try:
+        return subprocess.run(
+            args,
+            input=input_bytes,
+            capture_output=True,
+            check=False,
+            timeout=timeout,
+        )
+    except FileNotFoundError:
+        return subprocess.CompletedProcess(args, 127, b"", f"{args[0]} not found".encode())
+    except subprocess.TimeoutExpired:
+        return subprocess.CompletedProcess(args, 124, b"", b"Command timed out")
+
+
+def notify(summary: str, body: str = "", urgency: str = "low") -> None:
+    cmd = [
+        "notify-send",
+        "-a",
+        "Clipboard",
+        "-u",
+        urgency,
+        "-h",
+        "string:x-canonical-private-synchronous:waybar-clipboard",
+        summary,
+    ]
+    if body:
+        cmd.append(body)
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except OSError:
+        pass
+
+
+def kill_pidfile(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        pid = int(path.read_text().strip())
+    except (OSError, ValueError):
+        path.unlink(missing_ok=True)
+        return False
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+        if b"fuzzel" in cmdline:
+            os.kill(pid, signal.SIGTERM)
+            path.unlink(missing_ok=True)
+            return True
+    except OSError:
+        pass
+    path.unlink(missing_ok=True)
+    return False
+
+
+def detect_cursor_output() -> str | None:
+    pos_res = run_cmd(["hyprctl", "cursorpos", "-j"], timeout=2.0)
+    mon_res = run_cmd(["hyprctl", "monitors", "-j"], timeout=2.0)
+    if pos_res.returncode != 0 or mon_res.returncode != 0:
+        return None
+    try:
+        pos = json.loads(pos_res.stdout.decode("utf-8"))
+        monitors = json.loads(mon_res.stdout.decode("utf-8"))
+        cx, cy = float(pos["x"]), float(pos["y"])
+        for mon in monitors:
+            scale = float(mon.get("scale", 1) or 1)
+            transform = int(mon.get("transform", 0) or 0)
+            w = float(mon["width"]) / scale
+            h = float(mon["height"]) / scale
+            if transform in (1, 3, 5, 7):
+                w, h = h, w
+            mx, my = float(mon["x"]), float(mon["y"])
+            if mx <= cx < mx + w and my <= cy < my + h:
+                return str(mon["name"])
+    except (ValueError, KeyError, TypeError, UnicodeDecodeError):
+        return None
+    return None
+
+
+def list_cliphist() -> list[tuple[str, str]]:
+    """Return list of (raw_cliphist_line, display_preview) tuples."""
+    res = run_cmd(["cliphist", "list"], timeout=5.0)
+    if res.returncode != 0:
+        if res.returncode == 127:
+            notify("Clipboard error", "cliphist is not installed", urgency="normal")
+        return []
+
+    entries: list[tuple[str, str]] = []
+    for raw in res.stdout.decode("utf-8", errors="replace").splitlines():
+        if not raw.strip():
+            continue
+        if "\t" in raw:
+            _, preview = raw.split("\t", 1)
+        else:
+            preview = raw
+        entries.append((raw, preview))
+    return entries
+
+
+def format_entry(preview: str) -> str:
+    clean = preview.replace("\x00", " ").replace("\x1f", " ").strip()
+    if clean.startswith("[[ binary data ") and clean.endswith(" ]]"):
+        label = clean[len("[[ binary data ") : -len(" ]]")]
+        return f"󰋩  {label}"
+    return f"󰅍  {clean}"
+
+
+def copy_entry(raw_line: str) -> bool:
+    dec = run_cmd(["cliphist", "decode"], input_bytes=(raw_line + "\n").encode("utf-8"), timeout=5.0)
+    if dec.returncode != 0:
+        return False
+    try:
+        # DEVNULL stdout/stderr so wl-copy's forked daemon does not keep pipes open.
+        proc = subprocess.Popen(
+            ["wl-copy"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        assert proc.stdin is not None
+        proc.stdin.write(dec.stdout)
+        proc.stdin.close()
+        return proc.wait(timeout=5.0) == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
+def delete_entry(raw_line: str) -> bool:
+    res = run_cmd(["cliphist", "delete"], input_bytes=(raw_line + "\n").encode("utf-8"), timeout=5.0)
+    return res.returncode == 0
+
+
+def wipe_history() -> bool:
+    res = run_cmd(["cliphist", "wipe"], timeout=5.0)
+    if res.returncode != 0:
+        return False
+    run_cmd(["wl-copy", "--clear"], timeout=2.0)
+    return True
+
+
+def run_fuzzel(
+    lines: list[str],
+    output: str | None,
+    *,
+    prompt: str = "󰅌  ",
+    placeholder: str = "Search clipboard...",
+    mesg: str | None = None,
+    width: int = 56,
+    max_lines: int = 12,
+    select_index: int | None = None,
+    custom_binds: bool = False,
+) -> tuple[int, int | None]:
+    cmd = [
+        "fuzzel",
+        "--dmenu",
+        "--index",
+        "--no-sort",
+        "--minimal-lines",
+        f"--lines={min(max_lines, max(1, len(lines)))}",
+        f"--width={width}",
+        "--anchor=top",
+        "--y-margin=10",
+        f"--prompt={prompt}",
+        f"--placeholder={placeholder}",
+    ]
+    if mesg:
+        cmd.append(f"--mesg={mesg}")
+    if output:
+        cmd.append(f"--output={output}")
+    if select_index is not None and 0 <= select_index < len(lines):
+        cmd.append(f"--select-index={select_index}")
+    if custom_binds:
+        cmd.extend(
+            [
+                "--counter",
+                "--override=key-bindings.expunge=none",
+                "--override=key-bindings.custom-1=Shift+Delete",
+                "--override=key-bindings.custom-2=Control+Shift+Delete",
+            ]
+        )
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    PID_FILE.write_text(str(proc.pid))
+    try:
+        stdout, _ = proc.communicate("\n".join(lines))
+    finally:
+        try:
+            if PID_FILE.exists() and PID_FILE.read_text().strip() == str(proc.pid):
+                PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    selected_idx: int | None = None
+    stripped = stdout.strip()
+    if stripped:
+        try:
+            selected_idx = int(stripped)
+        except ValueError:
+            selected_idx = None
+    return proc.returncode, selected_idx
+
+
+def confirm_clear(output: str | None, count: int) -> bool:
+    if count <= 0:
+        notify("Clipboard history", "History is already empty")
+        return False
+
+    options = [
+        f"󰆴  Yes, clear history ({count})",
+        "󰅖  Cancel",
+    ]
+    rc, idx = run_fuzzel(
+        options,
+        output,
+        prompt="󰆴  ",
+        placeholder="Confirm clear...",
+        width=32,
+        max_lines=2,
+    )
+    if rc == EXIT_ACCEPT and idx == 0:
+        if wipe_history():
+            notify("Clipboard cleared", f"Removed {count} {'entry' if count == 1 else 'entries'}")
+            return True
+        notify("Clipboard error", "Failed to wipe cliphist history", urgency="normal")
+    return False
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description="Fuzzel clipboard history menu backed by cliphist.")
+    parser.add_argument("--clear", action="store_true", help="Prompt to clear clipboard history")
+    args = parser.parse_args(argv)
+
+    if kill_pidfile(PID_FILE):
+        return 0
+    for other in OTHER_PID_FILES:
+        kill_pidfile(other)
+
+    output = detect_cursor_output()
+
+    if args.clear:
+        entries = list_cliphist()
+        confirm_clear(output, len(entries))
+        return 0
+
+    select_idx = 0
+    while True:
+        entries = list_cliphist()
+        if not entries:
+            run_fuzzel(
+                ["󰅌  Clipboard history is empty"],
+                output,
+                prompt="󰅌  ",
+                placeholder="Copy something to start recording...",
+                width=42,
+                max_lines=1,
+            )
+            return 0
+
+        lines = [format_entry(preview) for _, preview in entries]
+        clear_row_idx = len(lines)
+        lines.append("󰆴  Clear history…")
+
+        clamped_idx = max(0, min(select_idx, len(entries) - 1))
+        rc, idx = run_fuzzel(
+            lines,
+            output,
+            mesg="Enter: copy · Shift+Del: delete · Ctrl+Shift+Del: clear",
+            select_index=clamped_idx,
+            custom_binds=True,
+        )
+
+        if rc == EXIT_CLEAR:
+            confirm_clear(output, len(entries))
+            return 0
+
+        if idx is None or idx < 0 or idx >= len(lines):
+            return 0
+
+        if idx == clear_row_idx:
+            if rc == EXIT_ACCEPT:
+                confirm_clear(output, len(entries))
+            return 0
+
+        raw_line, preview = entries[idx]
+
+        if rc == EXIT_ACCEPT:
+            if copy_entry(raw_line):
+                notify("Copied from history", preview.strip()[:80])
+            else:
+                notify("Clipboard error", "Failed to copy entry to clipboard", urgency="normal")
+            return 0
+
+        if rc == EXIT_DELETE:
+            delete_entry(raw_line)
+            select_idx = idx
+            continue
+
+        return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

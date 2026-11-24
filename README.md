@@ -57,7 +57,7 @@ systemctl --user enable --now catppuccin-wallpaper.timer
 | `Super + E` | File manager (`dolphin`) |
 | `Super + Q` | Close window |
 | `Super + V` | Toggle floating |
-| `Super + Shift + V` | Clipboard history (`fuzzel` — `Shift+Del` delete, `Alt+P` pin, `Ctrl+Shift+Del` clear) |
+| `Super + Shift + V` | Clipboard history (`cliphist` + `fuzzel`, also in Waybar center pill — `Shift+Del` delete, `Ctrl+Shift+Del` clear) |
 | `Super + Arrows` | Focus window (`+ Shift` to move) |
 | `Super + 1–0` / `PgUp` `PgDn` | Switch workspace (`+ Shift` to move window) |
 | `Super + S` | Toggle scratchpad (`+ Shift` to send window) |

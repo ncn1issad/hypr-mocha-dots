@@ -125,6 +125,7 @@ window#waybar.empty .modules-left #mpris {
 #custom-backlight,
 #custom-external-backlight,
 #custom-battery,
+#custom-clipboard,
 #custom-nightlight,
 #custom-browser,
 #custom-cava_mviz,
@@ -265,6 +266,10 @@ window#waybar.empty .modules-left #mpris {
 
 #custom-power {
   color: @red;
+}
+
+#custom-clipboard {
+  color: @lavender;
 }
 
 #custom-updater {

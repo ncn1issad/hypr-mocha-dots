@@ -8,7 +8,7 @@
   "margin-left": 8,
   "margin-right": 8,
   "modules-left": ["mpris", "hyprland/window"],
-  "modules-center": ["hyprland/workspaces", "clock", "idle_inhibitor"],
+  "modules-center": ["hyprland/workspaces", "clock", "idle_inhibitor", "custom/clipboard"],
   "modules-right": ["tray", "network", "bluetooth", "backlight", "custom/external-backlight", "pulseaudio#output", "pulseaudio#input", "custom/battery", "custom/power"],
   "custom/power": {
     "format": "󰐥<span font_family='JetBrains Mono'>&#8203;</span>",
@@ -56,6 +56,12 @@
     },
     "tooltip-format-activated": "Idle inhibitor: awake",
     "tooltip-format-deactivated": "Idle inhibitor: idle"
+  },
+  "custom/clipboard": {
+    "format": "󰅌<span font_family='JetBrains Mono'>&#8203;</span>",
+    "tooltip-format": "Clipboard history\nLeft: Open history · Right: Clear history",
+    "on-click": "$HOME/.local/bin/waybar-clipboard-menu",
+    "on-click-right": "$HOME/.local/bin/waybar-clipboard-menu --clear"
   },
   "network": {
     "format-wifi": "{icon} {signalStrength}%",
