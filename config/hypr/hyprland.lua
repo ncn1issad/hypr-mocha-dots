@@ -50,6 +50,8 @@ local menu = "fuzzel"
 hl.on("hyprland.start", function ()
     hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/awww-daemon")
     hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/desktop-context-menu")
+    hl.exec_cmd("wl-paste --type text --watch cliphist store")
+    hl.exec_cmd("wl-paste --type image --watch cliphist store")
 end)
 
 hl.on("monitor.added", function(monitor)
@@ -299,6 +301,7 @@ local closeWindowBind = hl.bind(mainMod .. " + Q", hl.dsp.window.close())
 hl.bind(mainMod .. " + M", hl.dsp.exec_cmd("command -v hyprshutdown >/dev/null 2>&1 && hyprshutdown || hyprctl dispatch 'hl.dsp.exit()'"))
 hl.bind(mainMod .. " + E", hl.dsp.exec_cmd(fileManager))
 hl.bind(mainMod .. " + V", hl.dsp.window.float({ action = "toggle" }))
+hl.bind(mainMod .. " + SHIFT + V", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/clipboard-history"))
 hl.bind(mainMod .. " + D", hl.dsp.exec_cmd(menu))
 hl.bind(mainMod .. " + P", hl.dsp.window.pseudo())
 hl.bind(mainMod .. " + J", hl.dsp.layout("togglesplit"))    -- dwindle only
@@ -355,6 +358,10 @@ hl.bind("XF86AudioNext",  hl.dsp.exec_cmd("playerctl next"),       { locked = tr
 hl.bind("XF86AudioPause", hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
 hl.bind("XF86AudioPlay",  hl.dsp.exec_cmd("playerctl play-pause"), { locked = true })
 hl.bind("XF86AudioPrev",  hl.dsp.exec_cmd("playerctl previous"),   { locked = true })
+
+-- Screenshots (Print = region to clipboard, Super + Print = Fuzzel menu)
+hl.bind("Print",              hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/screenshot region"))
+hl.bind(mainMod .. " + Print", hl.dsp.exec_cmd(os.getenv("HOME") .. "/.local/bin/screenshot menu"))
 
 
 --------------------------------

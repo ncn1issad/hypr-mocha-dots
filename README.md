@@ -18,7 +18,7 @@
 | --- | --- | --- |
 | **WM** | Hyprland (`hyprland.lua`) | Lua config with optional gitignored `local.lua` overrides |
 | **Bar** | Waybar | MPRIS, Bluetooth, Network, split audio, custom battery & power |
-| **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, power profiles & session |
+| **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, clipboard history, power profiles & session |
 | **Terminal** | Kitty | Catppuccin Mocha + JetBrains Mono |
 | **Lock / Power** | Hyprlock · wlogout | Wallpaper-synced lockscreen with media controls, custom lavender icons |
 | **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with Fuzzel desktop right-click menu to skip or remove |
@@ -57,7 +57,9 @@ systemctl --user enable --now catppuccin-wallpaper.timer
 | `Super + E` | File manager (`dolphin`) |
 | `Super + Q` | Close window |
 | `Super + V` | Toggle floating |
+| `Super + Shift + V` | Clipboard history (`fuzzel` — `Shift+Del` delete, `Alt+P` pin, `Ctrl+Shift+Del` clear) |
 | `Super + Arrows` | Focus window (`+ Shift` to move) |
 | `Super + 1–0` / `PgUp` `PgDn` | Switch workspace (`+ Shift` to move window) |
 | `Super + S` | Toggle scratchpad (`+ Shift` to send window) |
+| `Print` | Screenshot region to clipboard (`+ Super` for Fuzzel screenshot menu) |
 | `Super + M` | Exit session |
