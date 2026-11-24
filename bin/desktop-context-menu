@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import json
 import os
 import signal
 import subprocess
@@ -324,6 +325,42 @@ def remove_wallpaper_async(target: Path) -> None:
     threading.Thread(target=worker, daemon=True).start()
 
 
+def detect_cursor_monitor() -> dict[str, object] | None:
+    pos_res = subprocess.run(
+        ["hyprctl", "cursorpos", "-j"], text=True, capture_output=True, check=False
+    )
+    mon_res = subprocess.run(
+        ["hyprctl", "monitors", "-j"], text=True, capture_output=True, check=False
+    )
+    if pos_res.returncode != 0 or mon_res.returncode != 0:
+        return None
+    try:
+        pos = json.loads(pos_res.stdout)
+        monitors = json.loads(mon_res.stdout)
+        cx, cy = float(pos["x"]), float(pos["y"])
+        for mon in monitors:
+            scale = float(mon.get("scale", 1) or 1)
+            transform = int(mon.get("transform", 0) or 0)
+            w = float(mon["width"]) / scale
+            h = float(mon["height"]) / scale
+            if transform in (1, 3, 5, 7):
+                w, h = h, w
+            mx, my = float(mon["x"]), float(mon["y"])
+            if mx <= cx < mx + w and my <= cy < my + h:
+                reserved = mon.get("reserved") or [0, 0, 0, 0]
+                if not isinstance(reserved, list) or len(reserved) != 4:
+                    reserved = [0, 0, 0, 0]
+                return {
+                    "name": str(mon["name"]),
+                    "width": int(round(w)),
+                    "height": int(round(h)),
+                    "reserved": [int(v) for v in reserved],
+                }
+    except (ValueError, KeyError, TypeError):
+        return None
+    return None
+
+
 def point_in_widget(widget: Gtk.Widget, x: float, y: float) -> bool:
     alloc = widget.get_allocation()
     return alloc.x <= x < alloc.x + alloc.width and alloc.y <= y < alloc.y + alloc.height
@@ -384,10 +421,8 @@ class ContextMenuOverlay:
             geom = monitor.get_geometry()
             mon_w, mon_h = geom.width, geom.height
 
-        pos_x = x - menu_w if x + menu_w + EDGE_PADDING > mon_w else x
-        pos_y = y - menu_h if y + menu_h + EDGE_PADDING > mon_h else y
-        pos_x = max(EDGE_PADDING, min(pos_x, max(EDGE_PADDING, mon_w - menu_w - EDGE_PADDING)))
-        pos_y = max(EDGE_PADDING, min(pos_y, max(EDGE_PADDING, mon_h - menu_h - EDGE_PADDING)))
+        pos_x = max(EDGE_PADDING, min(x, max(EDGE_PADDING, mon_w - menu_w - EDGE_PADDING)))
+        pos_y = max(EDGE_PADDING, min(y, max(EDGE_PADDING, mon_h - menu_h - EDGE_PADDING)))
 
         fixed.put(self.menu_box, int(pos_x), int(pos_y))
         self.window.show_all()
@@ -578,7 +613,8 @@ class ConfirmDeleteOverlay:
 class DesktopContextMenuDaemon:
     """Maintains a BOTTOM-layer click catcher on every connected monitor."""
 
-    def __init__(self) -> None:
+    def __init__(self, backend: str = "gtk") -> None:
+        self._backend = backend
         self._display = Gdk.Display.get_default()
         if self._display is None:
             raise RuntimeError("No Wayland/GTK display available.")
@@ -586,6 +622,8 @@ class DesktopContextMenuDaemon:
         self._catchers: dict[Gdk.Monitor, Gtk.Window] = {}
         self._active_overlay: ContextMenuOverlay | ConfirmDeleteOverlay | None = None
         self._active_monitor: Gdk.Monitor | None = None
+        self._fuzzel_lock = threading.Lock()
+        self._fuzzel_proc: subprocess.Popen[str] | None = None
 
         self._install_css()
         self._display.connect("monitor-added", self._on_monitor_added)
@@ -638,14 +676,161 @@ class DesktopContextMenuDaemon:
     def _on_monitor_removed(self, _display: Gdk.Display, monitor: Gdk.Monitor) -> None:
         self._remove_catcher(monitor)
 
+    def _kill_fuzzel(self) -> bool:
+        with self._fuzzel_lock:
+            proc = self._fuzzel_proc
+            self._fuzzel_proc = None
+        if proc is not None and proc.poll() is None:
+            try:
+                proc.terminate()
+            except OSError:
+                pass
+            return True
+        return False
+
     def _on_desktop_click(
         self, win: Gtk.Window, event: Gdk.EventButton, monitor: Gdk.Monitor
     ) -> bool:
-        if event.type == Gdk.EventType.BUTTON_PRESS and event.button == 3:
+        if event.type != Gdk.EventType.BUTTON_PRESS:
+            return False
+
+        if self._backend == "fuzzel":
+            was_open = self._kill_fuzzel()
+            if event.button == 3:
+                bounds = (win.get_allocated_width(), win.get_allocated_height())
+                self._open_fuzzel_menu(monitor, int(event.x), int(event.y), bounds)
+                return True
+            return was_open
+
+        if event.button == 3:
             bounds = (win.get_allocated_width(), win.get_allocated_height())
             self._open_menu(monitor, int(event.x), int(event.y), bounds)
             return True
         return False
+
+    def _run_fuzzel_dialog(self, cmd: list[str], lines: list[str]) -> int | None:
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        with self._fuzzel_lock:
+            self._fuzzel_proc = proc
+        try:
+            stdout, _ = proc.communicate("\n".join(lines))
+        finally:
+            with self._fuzzel_lock:
+                if self._fuzzel_proc is proc:
+                    self._fuzzel_proc = None
+
+        if proc.returncode != 0:
+            return None
+        try:
+            return int(stdout.strip())
+        except ValueError:
+            return None
+
+    def _open_fuzzel_menu(
+        self, monitor: Gdk.Monitor, x: int, y: int, bounds: tuple[int, int]
+    ) -> None:
+        mon_w, mon_h = bounds
+        if mon_w <= 0 or mon_h <= 0:
+            geom = monitor.get_geometry()
+            mon_w, mon_h = geom.width, geom.height
+
+        def worker() -> None:
+            mon_info = detect_cursor_monitor()
+            output: str | None = None
+            res_left = res_top = res_right = res_bottom = 0
+            cur_w, cur_h = mon_w, mon_h
+
+            if mon_info is not None:
+                output = str(mon_info["name"])
+                cur_w = int(mon_info["width"]) or cur_w
+                cur_h = int(mon_info["height"]) or cur_h
+                res_left, res_top, res_right, res_bottom = mon_info["reserved"]  # type: ignore[misc]
+
+            # Fuzzel's --anchor=top-left margins are relative to the usable area
+            # (after exclusive zones like Waybar), not (0, 0).
+            est_w, est_h = 298, 72
+            usable_w = max(1, cur_w - res_left - res_right)
+            usable_h = max(1, cur_h - res_top - res_bottom)
+
+            rel_x = x - res_left
+            rel_y = y - res_top
+            max_x = max(EDGE_PADDING, usable_w - est_w - EDGE_PADDING)
+            max_y = max(EDGE_PADDING, usable_h - est_h - EDGE_PADDING)
+            margin_x = max(EDGE_PADDING, min(rel_x, max_x))
+            margin_y = max(EDGE_PADDING, min(rel_y, max_y))
+
+            cmd = [
+                "fuzzel",
+                "--dmenu",
+                "--index",
+                "--hide-prompt",
+                "--minimal-lines",
+                "--lines=2",
+                "--width=25",
+                "--layer=overlay",
+                "--namespace=desktop-context-menu-popup",
+                "--anchor=top-left",
+                f"--x-margin={int(margin_x)}",
+                f"--y-margin={int(margin_y)}",
+            ]
+            if output:
+                cmd.append(f"--output={output}")
+
+            choice = self._run_fuzzel_dialog(
+                cmd,
+                [
+                    "󰒭  Skip wallpaper",
+                    "󰆴  Remove from rotation",
+                ],
+            )
+            if choice == 0:
+                skip_wallpaper_async()
+            elif choice == 1:
+                target, err = get_current_removable_wallpaper()
+                if target is None:
+                    notify(
+                        "Cannot remove wallpaper",
+                        err or "No removable wallpaper active.",
+                        urgency="normal",
+                        icon="dialog-warning",
+                    )
+                    return
+
+                confirm_cmd = [
+                    "fuzzel",
+                    "--dmenu",
+                    "--index",
+                    "--hide-prompt",
+                    "--minimal-lines",
+                    "--lines=2",
+                    "--width=36",
+                    "--layer=overlay",
+                    "--namespace=desktop-context-menu-dialog",
+                    "--anchor=center",
+                    "--select-index=1",
+                    f"--mesg=Delete {target.name} from rotation?",
+                    "--mesg-mode=wrap",
+                ]
+                if output:
+                    confirm_cmd.append(f"--output={output}")
+
+                confirm = self._run_fuzzel_dialog(
+                    confirm_cmd,
+                    [
+                        "󰆴  Yes, delete wallpaper",
+                        "󰅖  Cancel",
+                    ],
+                )
+                if confirm == 0:
+                    remove_wallpaper_async(target)
+
+        threading.Thread(target=worker, daemon=True).start()
 
     def _close_overlay(self) -> None:
         overlay = self._active_overlay
@@ -694,6 +879,7 @@ class DesktopContextMenuDaemon:
         )
 
     def shutdown(self) -> None:
+        self._kill_fuzzel()
         self._close_overlay()
         for win in list(self._catchers.values()):
             win.destroy()
@@ -741,6 +927,12 @@ def main(argv: list[str]) -> int:
         action="store_true",
         help="Replace an already running instance.",
     )
+    parser.add_argument(
+        "--backend",
+        choices=("gtk", "fuzzel"),
+        default="fuzzel",
+        help="UI backend for the popup menu and confirmation dialog.",
+    )
     args = parser.parse_args(argv)
 
     lock_fd = acquire_singleton_lock(replace=args.replace)
@@ -748,7 +940,7 @@ def main(argv: list[str]) -> int:
         return 0
 
     try:
-        daemon = DesktopContextMenuDaemon()
+        daemon = DesktopContextMenuDaemon(backend=args.backend)
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: (daemon.shutdown(), False)[1])
         GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (daemon.shutdown(), False)[1])
         Gtk.main()

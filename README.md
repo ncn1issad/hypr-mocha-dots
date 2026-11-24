@@ -21,7 +21,7 @@
 | **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, power profiles & session |
 | **Terminal** | Kitty | Catppuccin Mocha + JetBrains Mono |
 | **Lock / Power** | Hyprlock · wlogout | Wallpaper-synced lockscreen with media controls, custom lavender icons |
-| **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with GTK3 desktop right-click menu to skip or remove |
+| **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with Fuzzel desktop right-click menu to skip or remove |
 | **System** | btop · UWSM · Fontconfig | Mocha theme, Qt/cursor env, JetBrains Mono defaults |
 
 ## Structure
