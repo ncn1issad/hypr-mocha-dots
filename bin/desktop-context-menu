@@ -1,0 +1,767 @@
+#!/usr/bin/env python3
+"""Catppuccin Mocha GTK3 desktop right-click menu daemon for Hyprland."""
+
+from __future__ import annotations
+
+import argparse
+import fcntl
+import os
+import signal
+import subprocess
+import sys
+import threading
+from pathlib import Path
+from typing import Callable
+
+import cairo
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+gi.require_version("GtkLayerShell", "0.1")
+from gi.repository import Gdk, GLib, Gtk, GtkLayerShell, Pango  # noqa: E402
+
+RUNTIME_DIR = Path(os.environ.get("XDG_RUNTIME_DIR", "/tmp"))
+LOCK_FILE = RUNTIME_DIR / "desktop-context-menu.lock"
+PID_FILE = RUNTIME_DIR / "desktop-context-menu.pid"
+
+ROTATE_SCRIPT = Path.home() / ".local/bin/rotate-catppuccin-wallpaper"
+WALLPAPERS_DIR = Path(
+    os.environ.get(
+        "WALLPAPERS_DIR",
+        str(Path.home() / "Pictures/Wallpapers/Catppuccin Mocha"),
+    )
+)
+
+EDGE_PADDING = 10
+
+CSS = b"""
+window.desktop-transparent {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    box-shadow: none;
+}
+
+.context-menu {
+    background-color: rgba(30, 30, 46, 0.94);
+    border: 2px solid #b4befe;
+    border-radius: 10px;
+    padding: 6px;
+    box-shadow: 0 8px 24px rgba(17, 17, 27, 0.55);
+}
+
+button.menu-item {
+    background-color: transparent;
+    background-image: none;
+    border: none;
+    border-radius: 7px;
+    box-shadow: none;
+    color: #cdd6f4;
+    padding: 8px 14px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    transition: background-color 120ms ease, color 120ms ease;
+}
+
+button.menu-item:hover,
+button.menu-item:focus {
+    background-color: #313244;
+    color: #cdd6f4;
+    outline: none;
+}
+
+button.menu-item:active {
+    background-color: #45475a;
+}
+
+button.menu-item .menu-icon {
+    color: #b4befe;
+    font-size: 15px;
+    margin-right: 10px;
+}
+
+button.menu-item.destructive .menu-icon {
+    color: #f38ba8;
+}
+
+button.menu-item.destructive:hover,
+button.menu-item.destructive:focus {
+    background-color: rgba(243, 139, 168, 0.16);
+    color: #f38ba8;
+}
+
+button.menu-item.destructive:active {
+    background-color: rgba(243, 139, 168, 0.28);
+}
+
+.confirm-card {
+    background-color: rgba(30, 30, 46, 0.96);
+    border: 2px solid #b4befe;
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: 0 12px 32px rgba(17, 17, 27, 0.65);
+    min-width: 340px;
+}
+
+.confirm-title {
+    color: #cdd6f4;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 15px;
+    font-weight: 700;
+}
+
+.confirm-icon {
+    color: #f38ba8;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 18px;
+    margin-right: 10px;
+}
+
+.confirm-filename {
+    background-color: #313244;
+    border: 1px solid #45475a;
+    border-radius: 7px;
+    color: #b4befe;
+    padding: 6px 10px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.confirm-body {
+    color: #a6adc8;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 12px;
+}
+
+button.dialog-btn {
+    background-color: #313244;
+    background-image: none;
+    border: 1px solid #45475a;
+    border-radius: 8px;
+    box-shadow: none;
+    color: #cdd6f4;
+    padding: 7px 16px;
+    font-family: "JetBrainsMono Nerd Font", "JetBrains Mono", "Symbols Nerd Font", sans-serif;
+    font-size: 13px;
+    font-weight: 600;
+    transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+button.dialog-btn:hover,
+button.dialog-btn:focus {
+    background-color: #45475a;
+    border-color: #b4befe;
+    outline: none;
+}
+
+button.dialog-btn.danger-btn {
+    background-color: rgba(243, 139, 168, 0.18);
+    border-color: #f38ba8;
+    color: #f38ba8;
+}
+
+button.dialog-btn.danger-btn:hover,
+button.dialog-btn.danger-btn:focus {
+    background-color: #f38ba8;
+    border-color: #f38ba8;
+    color: #11111b;
+}
+"""
+
+
+def _draw_clear(_widget: Gtk.Widget, cr: cairo.Context) -> bool:
+    cr.save()
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    cr.set_source_rgba(0.0, 0.0, 0.0, 0.0)
+    cr.paint()
+    cr.restore()
+    return False
+
+
+def _draw_scrim(_widget: Gtk.Widget, cr: cairo.Context) -> bool:
+    cr.save()
+    cr.set_operator(cairo.OPERATOR_SOURCE)
+    cr.set_source_rgba(17 / 255.0, 17 / 255.0, 27 / 255.0, 0.48)
+    cr.paint()
+    cr.restore()
+    return False
+
+
+def configure_transparent_window(win: Gtk.Window, draw_cb: Callable[..., bool]) -> None:
+    win.set_decorated(False)
+    win.set_app_paintable(True)
+    win.get_style_context().add_class("desktop-transparent")
+    visual = win.get_screen().get_rgba_visual()
+    if visual is not None:
+        win.set_visual(visual)
+    win.connect("draw", draw_cb)
+
+
+def configure_fullscreen_layer(
+    win: Gtk.Window,
+    monitor: Gdk.Monitor,
+    layer: GtkLayerShell.Layer,
+    namespace: str,
+    keyboard_mode: GtkLayerShell.KeyboardMode,
+) -> None:
+    GtkLayerShell.init_for_window(win)
+    GtkLayerShell.set_layer(win, layer)
+    GtkLayerShell.set_namespace(win, namespace)
+    GtkLayerShell.set_monitor(win, monitor)
+    GtkLayerShell.set_exclusive_zone(win, -1)
+    GtkLayerShell.set_keyboard_mode(win, keyboard_mode)
+    for edge in (
+        GtkLayerShell.Edge.TOP,
+        GtkLayerShell.Edge.BOTTOM,
+        GtkLayerShell.Edge.LEFT,
+        GtkLayerShell.Edge.RIGHT,
+    ):
+        GtkLayerShell.set_anchor(win, edge, True)
+
+
+def notify(
+    summary: str,
+    body: str = "",
+    urgency: str = "normal",
+    icon: str = "image-x-generic",
+) -> None:
+    cmd = [
+        "notify-send",
+        "-a",
+        "Wallpaper",
+        "-u",
+        urgency,
+        "-i",
+        icon,
+        summary,
+    ]
+    if body:
+        cmd.append(body)
+    try:
+        subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+    except OSError:
+        pass
+
+
+def get_current_removable_wallpaper() -> tuple[Path | None, str | None]:
+    """Return (wallpaper_path, error_message) for the active wallpaper."""
+    res = subprocess.run(
+        [str(ROTATE_SCRIPT), "--current"],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    raw = res.stdout.strip()
+    if res.returncode != 0 or not raw:
+        return None, "Could not determine the active wallpaper."
+
+    try:
+        wallpapers_root = WALLPAPERS_DIR.resolve(strict=True)
+    except OSError:
+        return None, f"Wallpapers folder not found: {WALLPAPERS_DIR}"
+
+    try:
+        target = Path(raw).resolve(strict=True)
+    except OSError:
+        return None, "The active wallpaper file no longer exists."
+
+    if not target.is_file() or not target.is_relative_to(wallpapers_root):
+        return None, "The current wallpaper is not inside your rotation folder."
+
+    return target, None
+
+
+def skip_wallpaper_async() -> None:
+    def worker() -> None:
+        res = subprocess.run(
+            ["systemctl", "--user", "start", "catppuccin-wallpaper.service"],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            return
+
+        fallback = subprocess.run(
+            [str(ROTATE_SCRIPT)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if fallback.returncode != 0:
+            err = (fallback.stderr or res.stderr).strip() or "Failed to rotate wallpaper."
+            notify("Could not skip wallpaper", err, urgency="critical", icon="dialog-error")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def remove_wallpaper_async(target: Path) -> None:
+    def worker() -> None:
+        res = subprocess.run(
+            [str(ROTATE_SCRIPT), "--remove", str(target)],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+        if res.returncode == 0:
+            notify(
+                "Wallpaper removed",
+                f"Deleted {target.name} from rotation.",
+                icon="user-trash",
+            )
+        else:
+            err = res.stderr.strip() or f"Failed to delete {target.name}."
+            notify("Could not remove wallpaper", err, urgency="critical", icon="dialog-error")
+
+    threading.Thread(target=worker, daemon=True).start()
+
+
+def point_in_widget(widget: Gtk.Widget, x: float, y: float) -> bool:
+    alloc = widget.get_allocation()
+    return alloc.x <= x < alloc.x + alloc.width and alloc.y <= y < alloc.y + alloc.height
+
+
+class ContextMenuOverlay:
+    """Fullscreen transparent OVERLAY window placing a styled menu at (x, y)."""
+
+    def __init__(
+        self,
+        monitor: Gdk.Monitor,
+        x: int,
+        y: int,
+        bounds: tuple[int, int],
+        on_skip: Callable[[], None],
+        on_remove: Callable[[], None],
+        on_close: Callable[[], None],
+    ) -> None:
+        self._on_close = on_close
+        self._closed = False
+
+        self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        configure_transparent_window(self.window, _draw_clear)
+        configure_fullscreen_layer(
+            self.window,
+            monitor,
+            GtkLayerShell.Layer.OVERLAY,
+            "desktop-context-menu-popup",
+            GtkLayerShell.KeyboardMode.EXCLUSIVE,
+        )
+        self.window.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.KEY_PRESS_MASK
+        )
+        self.window.connect("button-press-event", self._on_button_press)
+        self.window.connect("key-press-event", self._on_key_press)
+
+        fixed = Gtk.Fixed()
+        self.window.add(fixed)
+
+        self.menu_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        self.menu_box.get_style_context().add_class("context-menu")
+
+        skip_btn = self._make_item("󰒭", "Skip wallpaper", on_skip)
+        remove_btn = self._make_item(
+            "󰆴", "Remove from rotation", on_remove, destructive=True
+        )
+        self._buttons = [skip_btn, remove_btn]
+        for btn in self._buttons:
+            self.menu_box.pack_start(btn, False, False, 0)
+
+        self.menu_box.show_all()
+        _, nat_size = self.menu_box.get_preferred_size()
+        menu_w = max(nat_size.width, 210)
+        menu_h = max(nat_size.height, 80)
+
+        mon_w, mon_h = bounds
+        if mon_w <= 0 or mon_h <= 0:
+            geom = monitor.get_geometry()
+            mon_w, mon_h = geom.width, geom.height
+
+        pos_x = x - menu_w if x + menu_w + EDGE_PADDING > mon_w else x
+        pos_y = y - menu_h if y + menu_h + EDGE_PADDING > mon_h else y
+        pos_x = max(EDGE_PADDING, min(pos_x, max(EDGE_PADDING, mon_w - menu_w - EDGE_PADDING)))
+        pos_y = max(EDGE_PADDING, min(pos_y, max(EDGE_PADDING, mon_h - menu_h - EDGE_PADDING)))
+
+        fixed.put(self.menu_box, int(pos_x), int(pos_y))
+        self.window.show_all()
+        self.window.set_focus(None)
+
+    def _make_item(
+        self,
+        icon: str,
+        label_text: str,
+        callback: Callable[[], None],
+        *,
+        destructive: bool = False,
+    ) -> Gtk.Button:
+        btn = Gtk.Button()
+        btn.set_relief(Gtk.ReliefStyle.NONE)
+        ctx = btn.get_style_context()
+        ctx.add_class("menu-item")
+        if destructive:
+            ctx.add_class("destructive")
+
+        row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        icon_lbl = Gtk.Label(label=icon)
+        icon_lbl.get_style_context().add_class("menu-icon")
+        text_lbl = Gtk.Label(label=label_text)
+        text_lbl.set_xalign(0.0)
+        text_lbl.get_style_context().add_class("menu-label")
+
+        row.pack_start(icon_lbl, False, False, 0)
+        row.pack_start(text_lbl, True, True, 0)
+        btn.add(row)
+
+        def on_clicked(_btn: Gtk.Button) -> None:
+            self.close()
+            callback()
+
+        btn.connect("clicked", on_clicked)
+        return btn
+
+    def _on_button_press(self, _win: Gtk.Window, event: Gdk.EventButton) -> bool:
+        if event.type == Gdk.EventType.BUTTON_PRESS:
+            if event.window != self.window.get_window():
+                return False
+            if not point_in_widget(self.menu_box, event.x, event.y):
+                self.close()
+                return True
+        return False
+
+    def _on_key_press(self, _win: Gtk.Window, event: Gdk.EventKey) -> bool:
+        key = event.keyval
+        if key == Gdk.KEY_Escape:
+            self.close()
+            return True
+        if key in (Gdk.KEY_Down, Gdk.KEY_Up):
+            focused = self.window.get_focus()
+            if focused in self._buttons:
+                idx = self._buttons.index(focused)
+                step = 1 if key == Gdk.KEY_Down else -1
+                self._buttons[(idx + step) % len(self._buttons)].grab_focus()
+            else:
+                target = self._buttons[0] if key == Gdk.KEY_Down else self._buttons[-1]
+                target.grab_focus()
+            return True
+        return False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.window.destroy()
+        self._on_close()
+
+
+class ConfirmDeleteOverlay:
+    """Centered Catppuccin confirmation modal on the OVERLAY layer."""
+
+    def __init__(
+        self,
+        monitor: Gdk.Monitor,
+        target: Path,
+        on_confirm: Callable[[Path], None],
+        on_close: Callable[[], None],
+    ) -> None:
+        self._target = target
+        self._on_confirm = on_confirm
+        self._on_close = on_close
+        self._closed = False
+
+        self.window = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        configure_transparent_window(self.window, _draw_scrim)
+        configure_fullscreen_layer(
+            self.window,
+            monitor,
+            GtkLayerShell.Layer.OVERLAY,
+            "desktop-context-menu-dialog",
+            GtkLayerShell.KeyboardMode.EXCLUSIVE,
+        )
+        self.window.add_events(
+            Gdk.EventMask.BUTTON_PRESS_MASK | Gdk.EventMask.KEY_PRESS_MASK
+        )
+        self.window.connect("button-press-event", self._on_button_press)
+        self.window.connect("key-press-event", self._on_key_press)
+
+        container = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        container.set_halign(Gtk.Align.CENTER)
+        container.set_valign(Gtk.Align.CENTER)
+        self.window.add(container)
+
+        self.card = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
+        self.card.get_style_context().add_class("confirm-card")
+        container.pack_start(self.card, False, False, 0)
+
+        header = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=0)
+        icon_lbl = Gtk.Label(label="󰆴")
+        icon_lbl.get_style_context().add_class("confirm-icon")
+        title_lbl = Gtk.Label(label="Remove wallpaper from rotation?")
+        title_lbl.set_xalign(0.0)
+        title_lbl.get_style_context().add_class("confirm-title")
+        header.pack_start(icon_lbl, False, False, 0)
+        header.pack_start(title_lbl, True, True, 0)
+        self.card.pack_start(header, False, False, 0)
+
+        name_lbl = Gtk.Label(label=target.name)
+        name_lbl.set_xalign(0.0)
+        name_lbl.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        name_lbl.set_max_width_chars(46)
+        name_lbl.get_style_context().add_class("confirm-filename")
+        self.card.pack_start(name_lbl, False, False, 0)
+
+        body_lbl = Gtk.Label(
+            label="This deletes the file from your wallpapers folder and switches to another wallpaper."
+        )
+        body_lbl.set_xalign(0.0)
+        body_lbl.set_line_wrap(True)
+        body_lbl.set_max_width_chars(46)
+        body_lbl.get_style_context().add_class("confirm-body")
+        self.card.pack_start(body_lbl, False, False, 0)
+
+        actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        actions.set_halign(Gtk.Align.END)
+        actions.set_margin_top(6)
+
+        cancel_btn = Gtk.Button(label="󰅖  Cancel")
+        cancel_btn.set_relief(Gtk.ReliefStyle.NONE)
+        cancel_btn.get_style_context().add_class("dialog-btn")
+        cancel_btn.connect("clicked", lambda _b: self.close())
+
+        delete_btn = Gtk.Button(label="󰆴  Delete")
+        delete_btn.set_relief(Gtk.ReliefStyle.NONE)
+        delete_btn.get_style_context().add_class("dialog-btn")
+        delete_btn.get_style_context().add_class("danger-btn")
+        delete_btn.connect("clicked", self._on_delete_clicked)
+
+        actions.pack_start(cancel_btn, False, False, 0)
+        actions.pack_start(delete_btn, False, False, 0)
+        self.card.pack_start(actions, False, False, 0)
+
+        self.window.show_all()
+        cancel_btn.grab_focus()
+
+    def _on_delete_clicked(self, _btn: Gtk.Button) -> None:
+        target = self._target
+        self.close()
+        self._on_confirm(target)
+
+    def _on_button_press(self, _win: Gtk.Window, event: Gdk.EventButton) -> bool:
+        if event.type == Gdk.EventType.BUTTON_PRESS:
+            if event.window != self.window.get_window():
+                return False
+            if not point_in_widget(self.card, event.x, event.y):
+                self.close()
+                return True
+        return False
+
+    def _on_key_press(self, _win: Gtk.Window, event: Gdk.EventKey) -> bool:
+        if event.keyval == Gdk.KEY_Escape:
+            self.close()
+            return True
+        return False
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self.window.destroy()
+        self._on_close()
+
+
+class DesktopContextMenuDaemon:
+    """Maintains a BOTTOM-layer click catcher on every connected monitor."""
+
+    def __init__(self) -> None:
+        self._display = Gdk.Display.get_default()
+        if self._display is None:
+            raise RuntimeError("No Wayland/GTK display available.")
+
+        self._catchers: dict[Gdk.Monitor, Gtk.Window] = {}
+        self._active_overlay: ContextMenuOverlay | ConfirmDeleteOverlay | None = None
+        self._active_monitor: Gdk.Monitor | None = None
+
+        self._install_css()
+        self._display.connect("monitor-added", self._on_monitor_added)
+        self._display.connect("monitor-removed", self._on_monitor_removed)
+
+        for idx in range(self._display.get_n_monitors()):
+            monitor = self._display.get_monitor(idx)
+            if monitor is not None:
+                self._add_catcher(monitor)
+
+    def _install_css(self) -> None:
+        provider = Gtk.CssProvider()
+        provider.load_from_data(CSS)
+        screen = Gdk.Screen.get_default()
+        if screen is not None:
+            Gtk.StyleContext.add_provider_for_screen(
+                screen,
+                provider,
+                Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION,
+            )
+
+    def _add_catcher(self, monitor: Gdk.Monitor) -> None:
+        if monitor in self._catchers:
+            return
+
+        win = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)
+        configure_transparent_window(win, _draw_clear)
+        configure_fullscreen_layer(
+            win,
+            monitor,
+            GtkLayerShell.Layer.BOTTOM,
+            "desktop-context-menu",
+            GtkLayerShell.KeyboardMode.NONE,
+        )
+        win.add_events(Gdk.EventMask.BUTTON_PRESS_MASK)
+        win.connect("button-press-event", self._on_desktop_click, monitor)
+        win.show_all()
+        self._catchers[monitor] = win
+
+    def _remove_catcher(self, monitor: Gdk.Monitor) -> None:
+        if self._active_monitor is monitor:
+            self._close_overlay()
+        win = self._catchers.pop(monitor, None)
+        if win is not None:
+            win.destroy()
+
+    def _on_monitor_added(self, _display: Gdk.Display, monitor: Gdk.Monitor) -> None:
+        self._add_catcher(monitor)
+
+    def _on_monitor_removed(self, _display: Gdk.Display, monitor: Gdk.Monitor) -> None:
+        self._remove_catcher(monitor)
+
+    def _on_desktop_click(
+        self, win: Gtk.Window, event: Gdk.EventButton, monitor: Gdk.Monitor
+    ) -> bool:
+        if event.type == Gdk.EventType.BUTTON_PRESS and event.button == 3:
+            bounds = (win.get_allocated_width(), win.get_allocated_height())
+            self._open_menu(monitor, int(event.x), int(event.y), bounds)
+            return True
+        return False
+
+    def _close_overlay(self) -> None:
+        overlay = self._active_overlay
+        self._active_overlay = None
+        self._active_monitor = None
+        if overlay is not None:
+            overlay.close()
+
+    def _on_overlay_closed(self) -> None:
+        self._active_overlay = None
+        self._active_monitor = None
+
+    def _open_menu(
+        self, monitor: Gdk.Monitor, x: int, y: int, bounds: tuple[int, int]
+    ) -> None:
+        self._close_overlay()
+        self._active_monitor = monitor
+        self._active_overlay = ContextMenuOverlay(
+            monitor=monitor,
+            x=x,
+            y=y,
+            bounds=bounds,
+            on_skip=skip_wallpaper_async,
+            on_remove=lambda: self._prompt_remove(monitor),
+            on_close=self._on_overlay_closed,
+        )
+
+    def _prompt_remove(self, monitor: Gdk.Monitor) -> None:
+        target, err = get_current_removable_wallpaper()
+        if target is None:
+            notify(
+                "Cannot remove wallpaper",
+                err or "No removable wallpaper active.",
+                urgency="normal",
+                icon="dialog-warning",
+            )
+            return
+
+        self._close_overlay()
+        self._active_monitor = monitor
+        self._active_overlay = ConfirmDeleteOverlay(
+            monitor=monitor,
+            target=target,
+            on_confirm=remove_wallpaper_async,
+            on_close=self._on_overlay_closed,
+        )
+
+    def shutdown(self) -> None:
+        self._close_overlay()
+        for win in list(self._catchers.values()):
+            win.destroy()
+        self._catchers.clear()
+        Gtk.main_quit()
+
+
+def acquire_singleton_lock(replace: bool) -> object | None:
+    if replace and PID_FILE.exists():
+        try:
+            old_pid = int(PID_FILE.read_text().strip())
+            if old_pid != os.getpid():
+                os.kill(old_pid, signal.SIGTERM)
+        except (ValueError, OSError):
+            pass
+
+    lock_fd = open(LOCK_FILE, "w", encoding="utf-8")
+    try:
+        if replace:
+            for _ in range(30):
+                try:
+                    fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    break
+                except BlockingIOError:
+                    import time
+
+                    time.sleep(0.05)
+            else:
+                lock_fd.close()
+                return None
+        else:
+            fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        lock_fd.close()
+        return None
+
+    PID_FILE.write_text(f"{os.getpid()}\n", encoding="utf-8")
+    return lock_fd
+
+
+def main(argv: list[str]) -> int:
+    parser = argparse.ArgumentParser(description="Hyprland desktop right-click menu daemon.")
+    parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace an already running instance.",
+    )
+    args = parser.parse_args(argv)
+
+    lock_fd = acquire_singleton_lock(replace=args.replace)
+    if lock_fd is None:
+        return 0
+
+    try:
+        daemon = DesktopContextMenuDaemon()
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGINT, lambda: (daemon.shutdown(), False)[1])
+        GLib.unix_signal_add(GLib.PRIORITY_DEFAULT, signal.SIGTERM, lambda: (daemon.shutdown(), False)[1])
+        Gtk.main()
+    finally:
+        try:
+            if PID_FILE.exists() and PID_FILE.read_text().strip() == str(os.getpid()):
+                PID_FILE.unlink(missing_ok=True)
+        except OSError:
+            pass
+        lock_fd.close()
+
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

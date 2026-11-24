@@ -1,10 +1,14 @@
 #!/usr/bin/bash
 set -euo pipefail
 
-wallpapers="$HOME/Pictures/Wallpapers/Catppuccin Mocha"
-awww="$HOME/.local/bin/awww"
-greeter_cache=/var/cache/sddm-desktop-wallpaper
+wallpapers="${WALLPAPERS_DIR:-$HOME/Pictures/Wallpapers/Catppuccin Mocha}"
+awww="${AWWW_BIN:-$HOME/.local/bin/awww}"
+greeter_cache="${GREETER_CACHE:-/var/cache/sddm-desktop-wallpaper}"
 fallback=/usr/share/sddm/themes/catppuccin-mocha-lavender/backgrounds/wall.png
+
+list_images() {
+    find "$wallpapers" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' \) -print0
+}
 
 current_wallpaper() {
     local line
@@ -20,12 +24,83 @@ current_wallpaper() {
 publish_wallpaper() {
     local image=$1 temporary
     [[ $image == "$wallpapers/"* ]] || return 0
+    [[ -d $greeter_cache ]] || return 0
     temporary=$(mktemp "$greeter_cache/.current.XXXXXXXX") || return 1
     if cp -- "$image" "$temporary" && chmod 0640 "$temporary" && mv -fT -- "$temporary" "$greeter_cache/current"; then
         return
     fi
     rm -f -- "$temporary"
     return 1
+}
+
+rotate_wallpaper() {
+    local outputs=$1
+    local -a images=() choices=()
+    local current_paths image wallpaper
+
+    mapfile -d '' -t images < <(list_images)
+    if (( ${#images[@]} == 0 )); then
+        echo "No images found in $wallpapers." >&2
+        return 1
+    fi
+
+    current_paths=$(sed -nE 's/^.*currently displaying: (image|animation): //p' <<< "$outputs")
+    for image in "${images[@]}"; do
+        if ! grep -Fxq -- "$image" <<< "$current_paths"; then
+            choices+=("$image")
+        fi
+    done
+    if (( ${#choices[@]} == 0 )); then
+        choices=("${images[@]}")
+    fi
+
+    IFS= read -r -d '' wallpaper < <(printf '%s\0' "${choices[@]}" | shuf -z -n 1)
+    "$awww" img "$wallpaper"
+    publish_wallpaper "$wallpaper"
+}
+
+remove_wallpaper() {
+    local outputs=$1 target=$2
+    local wallpapers_real target_real current_paths path path_real
+    local -a images=()
+    local is_displayed=0
+
+    if ! wallpapers_real=$(realpath -e -- "$wallpapers" 2>/dev/null); then
+        echo "Wallpapers folder not found: $wallpapers" >&2
+        return 1
+    fi
+    if ! target_real=$(realpath -e -- "$target" 2>/dev/null); then
+        echo "Wallpaper file no longer exists." >&2
+        return 1
+    fi
+    if [[ ! -f $target_real || $target_real != "$wallpapers_real/"* ]]; then
+        echo "Refusing to remove file outside $wallpapers." >&2
+        return 1
+    fi
+
+    mapfile -d '' -t images < <(list_images)
+    if (( ${#images[@]} <= 1 )); then
+        echo "Cannot remove the last remaining wallpaper." >&2
+        return 1
+    fi
+
+    current_paths=$(sed -nE 's/^.*currently displaying: (image|animation): //p' <<< "$outputs")
+    while IFS= read -r path; do
+        [[ -n $path ]] || continue
+        path_real=$(realpath -m -- "$path" 2>/dev/null || printf '%s' "$path")
+        if [[ $path == "$target" || $path_real == "$target_real" ]]; then
+            is_displayed=1
+            break
+        fi
+    done <<< "$current_paths"
+
+    rm -- "$target_real"
+
+    if (( is_displayed )); then
+        rotate_wallpaper "$outputs"
+    fi
+
+    printf '%s\n' "$target_real"
 }
 
 if [[ ${1:-} == --current ]]; then
@@ -76,25 +151,19 @@ if [[ ${1:-} == --sync-output ]]; then
     exit 0
 fi
 
-mapfile -d '' -t images < <(
-    find "$wallpapers" -type f \( -iname '*.png' -o -iname '*.jpg' -o -iname '*.jpeg' -o -iname '*.webp' -o -iname '*.gif' \) -print0
-)
-if (( ${#images[@]} == 0 )); then
-    echo "No images found in $wallpapers." >&2
-    exit 1
+if [[ ${1:-} == --remove ]]; then
+    target=${2:?Missing wallpaper path}
+    remove_wallpaper "$outputs" "$target"
+    exit
 fi
 
-current_paths=$(sed -nE 's/^.*currently displaying: (image|animation): //p' <<< "$outputs")
-choices=()
-for image in "${images[@]}"; do
-    if ! grep -Fxq -- "$image" <<< "$current_paths"; then
-        choices+=("$image")
+if [[ ${1:-} == --remove-current ]]; then
+    if ! wallpaper=$(current_wallpaper "$outputs"); then
+        echo "No active wallpaper found." >&2
+        exit 1
     fi
-done
-if (( ${#choices[@]} == 0 )); then
-    choices=("${images[@]}")
+    remove_wallpaper "$outputs" "$wallpaper"
+    exit
 fi
 
-IFS= read -r -d '' wallpaper < <(printf '%s\0' "${choices[@]}" | shuf -z -n 1)
-"$awww" img "$wallpaper"
-publish_wallpaper "$wallpaper"
+rotate_wallpaper "$outputs"

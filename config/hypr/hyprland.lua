@@ -49,6 +49,7 @@ local menu = "fuzzel"
 
 hl.on("hyprland.start", function ()
     hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/awww-daemon")
+    hl.exec_cmd(os.getenv("HOME") .. "/.local/bin/desktop-context-menu")
 end)
 
 hl.on("monitor.added", function(monitor)
@@ -389,12 +390,11 @@ hl.window_rule({
 })
 
 -- Layer rules also return a handle.
--- local overlayLayerRule = hl.layer_rule({
---     name  = "no-anim-overlay",
---     match = { namespace = "^my-overlay$" },
---     no_anim = true,
--- })
--- overlayLayerRule:set_enabled(false)
+hl.layer_rule({
+    name  = "no-anim-desktop-context-menu",
+    match = { namespace = "^desktop-context-menu(-popup)?$" },
+    no_anim = true,
+})
 
 -- Hyprland-run windowrule
 hl.window_rule({
