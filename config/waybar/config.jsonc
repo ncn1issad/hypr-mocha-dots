@@ -54,8 +54,8 @@
       "activated": "󰅶",
       "deactivated": "󰾪"
     },
-    "tooltip-format-activated": "Idle inhibitor: awake",
-    "tooltip-format-deactivated": "Idle inhibitor: idle"
+    "tooltip-format-activated": "Idle inhibitor: awake · auto-lock paused",
+    "tooltip-format-deactivated": "Idle inhibitor: off · auto-lock active"
   },
   "custom/clipboard": {
     "format": "󰅌<span font_family='JetBrains Mono'>&#8203;</span>",

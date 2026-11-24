@@ -5,8 +5,7 @@ Roadmap for prototyping remaining shell features and evolving this setup into a 
 ## Prototype Features
 - [x] **Clipboard history** — background watchers (`wl-paste --type text/image --watch cliphist store`) + Waybar center pill icon + Fuzzel history picker (`Super + Shift + V`, with delete & clear confirmation)
 - [x] **Screenshots** — region / window / monitor / all-monitors capture (`grim` + `slurp`), copy to clipboard by default + optional save toggle + thumbnail notification via `bin/screenshot` and Fuzzel menu (`Print` / `Super + Print`)
-- [ ] **Idle & auto-lock (`hypridle`)** — dim screen, lock via `hyprlock`, DPMS off, and suspend timeouts wired up so Waybar's `idle_inhibitor` has an idle daemon to inhibit
-- [ ] **Polkit auth agent** — autostart `hyprpolkitagent` for GUI privilege prompts
+- [x] **Idle & auto-lock (`hypridle`)** — dim screen (2.5 min), lock via `hyprlock` (5 min), DPMS off (5.5 min), and suspend (30 min) via `config/hypr/hypridle.conf` + `hypridle.service`, with sleep lock inhibition, `Super + L` lock bind, and Waybar's `idle_inhibitor` wired up
 - [x] **Notification daemon config** *(optional)* — minimal toast-only `dunst` config (`config/dunst/dunstrc`) with decoupled Catppuccin Mocha Lavender theme drop-in (`config/dunst/dunstrc.d/50-catppuccin-mocha.conf`), Fuzzel action menu, and hover-to-pause
 
 ## Architecture & Prod Rewrite

@@ -168,10 +168,12 @@ window#waybar.empty .modules-left #mpris {
 	padding-left: 6px;
 }
 /*-----Indicators----*/
-#custom-hypridle.notactive,
+#idle_inhibitor {
+  color: @overlay1;
+}
+
 #idle_inhibitor.activated {
-	color: #39FF14;
-    border-bottom: 8px solid rgba(0, 0, 0, 0.2);
+  color: @peach;
 }
 
 #bluetooth,

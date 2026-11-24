@@ -21,7 +21,7 @@
 | **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, clipboard history, power profiles & session |
 | **Notifications** | Dunst | Minimal toast-only Wayland notifications (`dunstrc` + swappable `dunstrc.d/` Catppuccin Mocha theme drop-in) |
 | **Terminal** | Kitty | Catppuccin Mocha + JetBrains Mono |
-| **Lock / Power** | Hyprlock · wlogout | Wallpaper-synced lockscreen with media controls, custom lavender icons |
+| **Lock / Idle / Power** | Hyprlock · Hypridle · wlogout | Wallpaper-synced lockscreen with media controls, dim/lock/DPMS/suspend idle daemon, custom lavender icons |
 | **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with Fuzzel desktop right-click menu to skip or remove |
 | **System** | btop · UWSM · Fontconfig | Mocha theme, Qt/cursor env, JetBrains Mono defaults |
 
@@ -42,7 +42,13 @@
 cp config/hypr/local.example.lua config/hypr/local.lua
 ```
 
-3. *(Optional)* Clone wallpapers from [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) and enable automatic rotation:
+3. Enable idle & auto-lock (`hypridle` + `brightnessctl`):
+
+```bash
+systemctl --user enable --now hypridle.service
+```
+
+4. *(Optional)* Clone wallpapers from [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) and enable automatic rotation:
 
 ```bash
 git clone https://github.com/orangci/walls-catppuccin-mocha "$HOME/Pictures/Wallpapers/Catppuccin Mocha"
@@ -63,4 +69,5 @@ systemctl --user enable --now catppuccin-wallpaper.timer
 | `Super + 1–0` / `PgUp` `PgDn` | Switch workspace (`+ Shift` to move window) |
 | `Super + S` | Toggle scratchpad (`+ Shift` to send window) |
 | `Print` | Screenshot region to clipboard (`+ Super` for Fuzzel screenshot menu) |
+| `Super + L` | Lock screen (`hyprlock` via `loginctl lock-session`) |
 | `Super + M` | Exit session |
