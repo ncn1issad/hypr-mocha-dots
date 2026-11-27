@@ -12,6 +12,8 @@
 
 ---
 
+> This project has moved to [Fuzzydots](https://github.com/ncn1issad/fuzzydots). The Mocha theme and its installer are maintained there.
+
 ## Stack
 
 | Component | Tool | Notes |
