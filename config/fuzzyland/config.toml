@@ -1,0 +1,18 @@
+# Catppuccin Mocha (Lavender) theme preset and daemon settings for fuzzyland.
+# Matches hypr-mocha-dots colors.
+
+[tooltip]
+text = "#cdd6f4"
+subtext = "#a6adc8"
+muted = "#7f849c"
+separator = "#45475a"
+
+[clipboard]
+watch = true
+
+[screenshot]
+slurp_bg = "#1e1e2e88"
+slurp_border = "#b4befeff"
+slurp_selection = "#31324433"
+slurp_box = "#1e1e2edd"
+slurp_font = "JetBrains Mono"
