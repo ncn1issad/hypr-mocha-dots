@@ -17,11 +17,12 @@
 | Component | Tool | Notes |
 | --- | --- | --- |
 | **WM** | Hyprland (`hyprland.lua`) | Lua config with optional gitignored `local.lua` overrides |
-| **Bar** | Waybar | MPRIS, Bluetooth, Network, split audio, custom battery & power |
-| **Launcher & Menus** | Fuzzel | Interactive menus for Wi-Fi, Bluetooth, audio, clipboard history, power profiles & session |
+| **Shell Backend** | [`fuzzyland`](../fuzzyland) | Single-binary Rust daemon & CLI (`fuzzyland.service`) powering streaming Waybar modules, Fuzzel menus, native audio volume/mute, built-in & DDC/CI backlight, Wi-Fi/Bluetooth toggles, screenshots, daemon-managed clipboard history, and MPRIS controls; Catppuccin Mocha preset in `config/fuzzyland/config.toml` |
+| **Bar** | Waybar | MPRIS, Bluetooth, Network, split audio, built-in & DDC/CI external backlight, and live-streaming battery via `fuzzyland` |
+| **Launcher & Menus** | Fuzzel | App launcher + interactive `fuzzyland` menus for Wi-Fi, Bluetooth, audio/EasyEffects, clipboard history, screenshots, power profiles & session |
 | **Notifications** | Dunst | Minimal toast-only Wayland notifications (`dunstrc` + swappable `dunstrc.d/` Catppuccin Mocha theme drop-in) |
 | **Terminal** | Kitty | Catppuccin Mocha + JetBrains Mono |
-| **Lock / Idle / Power** | Hyprlock · Hypridle · wlogout | Wallpaper-synced lockscreen with media controls, dim/lock/DPMS/suspend idle daemon, custom lavender icons |
+| **Lock / Idle / Power** | Hyprlock · Hypridle · wlogout | Wallpaper-synced lockscreen with `fuzzyland media` controls, `fuzzyland backlight internal` idle dim/restore, lock/DPMS/suspend idle daemon, custom lavender icons |
 | **Wallpaper** | `awww` + systemd user timer | Rotates [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) every 15 min, with Fuzzel desktop right-click menu to skip or remove |
 | **System** | btop · UWSM · Fontconfig | Mocha theme, Qt/cursor env, JetBrains Mono defaults |
 
@@ -29,26 +30,33 @@
 
 ```text
 .
-├── bin/        # Scripts linked into ~/.local/bin (waybar menus, wallpaper rotation, hyprlock media)
-└── config/     # Configs linked into ~/.config (hypr, waybar, fuzzel, dunst, kitty, wlogout, btop, systemd, uwsm, fontconfig)
+├── bin/        # Scripts linked into ~/.local/bin (wallpaper rotation & desktop right-click menu)
+└── config/     # Configs linked into ~/.config (hypr, waybar, fuzzel, fuzzyland, dunst, kitty, wlogout, btop, systemd, uwsm, fontconfig)
 ```
 
 ## Quick Setup
 
 1. Clone the repo and symlink `config/*` into `~/.config/` and `bin/*` into `~/.local/bin/`.
-2. Create machine-specific monitor/input overrides (gitignored):
+2. Install [`fuzzyland`](../fuzzyland) to `~/.local/bin/fuzzyland` and enable its user daemon:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now fuzzyland.service
+```
+
+3. Create machine-specific monitor/input overrides (gitignored):
 
 ```bash
 cp config/hypr/local.example.lua config/hypr/local.lua
 ```
 
-3. Enable idle & auto-lock (`hypridle` + `brightnessctl`):
+4. Enable idle & auto-lock (`hypridle`, using `fuzzyland backlight internal` for dim/restore):
 
 ```bash
 systemctl --user enable --now hypridle.service
 ```
 
-4. *(Optional)* Clone wallpapers from [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) and enable automatic rotation:
+5. *(Optional)* Clone wallpapers from [`orangci/walls-catppuccin-mocha`](https://github.com/orangci/walls-catppuccin-mocha) and enable automatic rotation:
 
 ```bash
 git clone https://github.com/orangci/walls-catppuccin-mocha "$HOME/Pictures/Wallpapers/Catppuccin Mocha"
@@ -64,10 +72,10 @@ systemctl --user enable --now catppuccin-wallpaper.timer
 | `Super + E` | File manager (`dolphin`) |
 | `Super + Q` | Close window |
 | `Super + V` | Toggle floating |
-| `Super + Shift + V` | Clipboard history (`cliphist` + `fuzzel`, also in Waybar center pill — `Shift+Del` delete, `Ctrl+Shift+Del` clear) |
+| `Super + Shift + V` | Clipboard history (`fuzzyland clipboard` / `cliphist`, also in Waybar center pill — `Shift+Del` delete, `Ctrl+Shift+Del` clear) |
 | `Super + Arrows` | Focus window (`+ Shift` to move) |
 | `Super + 1–0` / `PgUp` `PgDn` | Switch workspace (`+ Shift` to move window) |
 | `Super + S` | Toggle scratchpad (`+ Shift` to send window) |
-| `Print` | Screenshot region to clipboard (`+ Super` for Fuzzel screenshot menu) |
+| `Print` | Screenshot region to clipboard (`+ Super` for `fuzzyland screenshot menu`) |
 | `Super + L` | Lock screen (`hyprlock` via `loginctl lock-session`) |
 | `Super + M` | Exit session |
