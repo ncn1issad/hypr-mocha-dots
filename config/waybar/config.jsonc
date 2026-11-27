@@ -13,7 +13,7 @@
   "custom/power": {
     "format": "󰐥<span font_family='JetBrains Mono'>&#8203;</span>",
     "tooltip-format": "Power menu (right-click: wlogout)",
-    "on-click": "$HOME/.local/bin/waybar-power-menu",
+    "on-click": "$HOME/.local/bin/fuzzyland power",
     "on-click-right": "/usr/bin/wlogout"
   },
   "tray": { "spacing": 8 },
@@ -39,9 +39,9 @@
     },
     "tooltip-format": "<b><span color='#cdd6f4'>󰎇  {title}</span></b>\n<span color='#b4befe'>󰠃  {dynamic}</span>\n<span color='#a6adc8'>{status_icon}  {status}  ·  {player_icon} {player}  ·  󰔛 {position}/{length}</span>\n<span color='#45475a'>──────────────────────────</span>\n<span color='#7f849c'>󰍽  Left 󰐎  ·  Middle 󰒮  ·  Right 󰒭</span>",
     "max-length": 30,
-    "on-click": "/usr/bin/playerctl play-pause",
-    "on-click-middle": "/usr/bin/playerctl previous",
-    "on-click-right": "/usr/bin/playerctl next"
+    "on-click": "$HOME/.local/bin/fuzzyland media play-pause",
+    "on-click-middle": "$HOME/.local/bin/fuzzyland media prev",
+    "on-click-right": "$HOME/.local/bin/fuzzyland media skip"
   },
   "clock": {
     "format": "󰅐 {:%H:%M}",
@@ -60,19 +60,19 @@
   "custom/clipboard": {
     "format": "󰅌<span font_family='JetBrains Mono'>&#8203;</span>",
     "tooltip-format": "Clipboard history\nLeft: Open history · Right: Clear history",
-    "on-click": "$HOME/.local/bin/waybar-clipboard-menu",
-    "on-click-right": "$HOME/.local/bin/waybar-clipboard-menu --clear"
+    "on-click": "$HOME/.local/bin/fuzzyland clipboard",
+    "on-click-right": "$HOME/.local/bin/fuzzyland clipboard --clear"
   },
   "network": {
     "format-wifi": "{icon} {signalStrength}%",
     "format-ethernet": "󰈀<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-disconnected": "󰤮<span font_family='JetBrains Mono'>&#8203;</span>",
     "format-icons": ["󰤯", "󰤟", "󰤢", "󰤥", "󰤨"],
-    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}",
-    "tooltip-format-ethernet": "{ifname} · {ipaddr}",
-    "tooltip-format-disconnected": "Disconnected",
-    "on-click": "$HOME/.local/bin/waybar-network-menu",
-    "on-click-right": "/usr/bin/nm-connection-editor"
+    "tooltip-format-wifi": "{essid} ({signalStrength}%) · {ipaddr}\nLeft: Network menu · Right: Toggle Wi-Fi",
+    "tooltip-format-ethernet": "{ifname} · {ipaddr}\nLeft: Network menu · Right: Toggle Wi-Fi",
+    "tooltip-format-disconnected": "Disconnected\nLeft: Network menu · Right: Toggle Wi-Fi",
+    "on-click": "$HOME/.local/bin/fuzzyland network",
+    "on-click-right": "$HOME/.local/bin/fuzzyland network --toggle-wifi"
   },
   "bluetooth": {
     "format": "󰂯<span font_family='JetBrains Mono'>&#8203;</span>",
@@ -90,21 +90,22 @@
     "tooltip-format-connected": "{controller_alias} · {num_connections} connected\n{device_enumerate}\nLeft: Bluetooth menu · Right: Power off",
     "tooltip-format-enumerate-connected": "{device_alias}",
     "tooltip-format-enumerate-connected-battery": "{device_alias} ({device_battery_percentage}%)",
-    "on-click": "$HOME/.local/bin/waybar-bluetooth-menu",
-    "on-click-right": "$HOME/.local/bin/waybar-bluetooth-menu --toggle-power"
+    "on-click": "$HOME/.local/bin/fuzzyland bluetooth",
+    "on-click-right": "$HOME/.local/bin/fuzzyland bluetooth --toggle-power"
   },
   "backlight": {
     "device": "intel_backlight",
     "format": "{icon} {percent}%",
-    "format-icons": ["󰃞", "󰃟", "󰃠"]
+    "format-icons": ["󰃞", "󰃟", "󰃠"],
+    "on-scroll-up": "$HOME/.local/bin/fuzzyland backlight internal adjust +5",
+    "on-scroll-down": "$HOME/.local/bin/fuzzyland backlight internal adjust -5"
   },
   "custom/external-backlight": {
-    "exec": "$HOME/.local/bin/waybar-external-backlight",
+    "exec": "$HOME/.local/bin/fuzzyland backlight status",
     "return-type": "json",
-    "interval": 30,
-    "signal": 9,
-    "on-scroll-up": "$HOME/.local/bin/waybar-external-backlight --adjust +5",
-    "on-scroll-down": "$HOME/.local/bin/waybar-external-backlight --adjust -5"
+    "on-scroll-up": "$HOME/.local/bin/fuzzyland backlight adjust +5",
+    "on-scroll-down": "$HOME/.local/bin/fuzzyland backlight adjust -5",
+    "on-click": "$HOME/.local/bin/fuzzyland backlight refresh"
   },
   "pulseaudio#output": {
     "format": "{icon} {volume}%",
@@ -117,12 +118,12 @@
       "headset": "󰋎",
       "default": ["󰕿", "󰖀", "󰕾"]
     },
-    "scroll-step": 5,
-    "max-volume": 100,
     "tooltip-format": "{desc} · {volume}%\nLeft: Output &amp; EQ · Middle: Toggle EQ · Right: Mute",
-    "on-click": "$HOME/.local/bin/waybar-output-menu",
-    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle",
-    "on-click-middle": "$HOME/.local/bin/waybar-output-menu --toggle-eq"
+    "on-click": "$HOME/.local/bin/fuzzyland audio output",
+    "on-click-right": "$HOME/.local/bin/fuzzyland audio output --toggle-mute",
+    "on-click-middle": "$HOME/.local/bin/fuzzyland audio output --toggle-eq",
+    "on-scroll-up": "$HOME/.local/bin/fuzzyland audio output --volume +5",
+    "on-scroll-down": "$HOME/.local/bin/fuzzyland audio output --volume -5"
   },
   "pulseaudio#input": {
     "format": "{format_source}",
@@ -132,17 +133,15 @@
     "format-source": "󰍬 {volume}%",
     "format-source-muted": "<span color='#f38ba8'>󰍭</span><span font_family='JetBrains Mono'>&#8203;</span>",
     "tooltip-format": "{source_desc} · {source_volume}%\nLeft: Input &amp; Mic FX · Middle: Toggle FX · Right: Mute",
-    "on-click": "$HOME/.local/bin/waybar-input-menu",
-    "on-click-right": "wpctl set-mute @DEFAULT_AUDIO_SOURCE@ toggle",
-    "on-click-middle": "$HOME/.local/bin/waybar-input-menu --toggle-fx",
-    "on-scroll-up": "wpctl set-volume -l 1 @DEFAULT_AUDIO_SOURCE@ 5%+",
-    "on-scroll-down": "wpctl set-volume @DEFAULT_AUDIO_SOURCE@ 5%-"
+    "on-click": "$HOME/.local/bin/fuzzyland audio input",
+    "on-click-right": "$HOME/.local/bin/fuzzyland audio input --toggle-mute",
+    "on-click-middle": "$HOME/.local/bin/fuzzyland audio input --toggle-fx",
+    "on-scroll-up": "$HOME/.local/bin/fuzzyland audio input --volume +5",
+    "on-scroll-down": "$HOME/.local/bin/fuzzyland audio input --volume -5"
   },
   "custom/battery": {
-    "exec": "$HOME/.local/bin/waybar-battery-status",
+    "exec": "$HOME/.local/bin/fuzzyland battery status",
     "return-type": "json",
-    "interval": 5,
-    "signal": 8,
-    "on-click": "$HOME/.local/bin/waybar-battery-menu"
+    "on-click": "$HOME/.local/bin/fuzzyland battery menu"
   }
 }
